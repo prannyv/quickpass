@@ -298,15 +298,27 @@ final class OnePasswordCLI: ObservableObject {
         defer { isLoading = false }
         
         do {
-            // Try to list accounts - this will trigger auth prompt if needed
-            let accounts = try await listAccounts()
+            // With desktop app integration, accounts won't show in `account list`
+            // Instead, try to list vaults directly - this triggers the auth prompt
+            let vaults = try await listVaults()
             
-            if let firstAccount = accounts.first {
-                currentAccount = firstAccount
+            if !vaults.isEmpty {
+                availableVaults = vaults
                 isSignedIn = true
                 
-                // Load available vaults
-                try await refreshVaults()
+                // Try to get account info (may be empty with desktop integration)
+                if let accounts = try? await listAccounts(), let first = accounts.first {
+                    currentAccount = first
+                } else {
+                    // Create a placeholder account for desktop app integration
+                    currentAccount = Account(
+                        id: "desktop-integration",
+                        name: "1Password",
+                        email: "Connected via Desktop App",
+                        url: "1password.com",
+                        userUUID: nil
+                    )
+                }
             } else {
                 lastError = .notSignedIn
                 isSignedIn = false
@@ -560,12 +572,22 @@ final class OnePasswordCLI: ObservableObject {
                     
                     // Check for common errors
                     if process.terminationStatus != 0 {
-                        if stderr.contains("not currently signed in") || stderr.contains("session expired") {
+                        let errorText = stderr.lowercased()
+                        
+                        if errorText.contains("not currently signed in") || errorText.contains("session expired") {
                             continuation.resume(throwing: OPError.notSignedIn)
                             return
                         }
-                        if stderr.contains("connecting to desktop app") || stderr.contains("not connected") {
+                        if errorText.contains("connecting to desktop app") || errorText.contains("not connected") {
                             continuation.resume(throwing: OPError.desktopIntegrationDisabled)
+                            return
+                        }
+                        if errorText.contains("no accounts configured") || errorText.contains("turn on the 1password desktop app integration") {
+                            continuation.resume(throwing: OPError.desktopIntegrationDisabled)
+                            return
+                        }
+                        if errorText.contains("authorization denied") || errorText.contains("user denied") {
+                            continuation.resume(throwing: OPError.notSignedIn)
                             return
                         }
                         continuation.resume(throwing: OPError.commandFailed(stderr.isEmpty ? "Exit code: \(process.terminationStatus)" : stderr))
