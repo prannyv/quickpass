@@ -189,20 +189,38 @@ struct ContentView: View {
             
             // CLI availability check
             if !onePassword.checkCLIAvailable() {
-                HStack {
-                    Image(systemName: "exclamationmark.circle")
-                        .foregroundColor(.red)
-                    Text("1Password CLI not found. Please ensure the 'op' binary is installed.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Image(systemName: "exclamationmark.circle")
+                            .foregroundColor(.red)
+                        Text("1Password CLI not found or not executable")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    if let path = onePassword.getOPBinaryPath() {
+                        Text("Found at: \(path) (but not executable)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("Install via: brew install 1password-cli")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 }
             } else {
-                HStack {
-                    Image(systemName: "checkmark.circle")
-                        .foregroundColor(.green)
-                    Text("1Password CLI found")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Image(systemName: "checkmark.circle")
+                            .foregroundColor(.green)
+                        Text("1Password CLI found")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    if let path = onePassword.getOPBinaryPath() {
+                        Text(path)
+                            .font(.caption2)
+                            .foregroundColor(.secondary.opacity(0.7))
+                    }
                 }
             }
             

@@ -183,35 +183,61 @@ final class OnePasswordCLI: ObservableObject {
     // MARK: - Initialization
     
     init() {
-        // Look for op binary in the app bundle's Resources folder
+        self.opBinaryURL = Self.findOPBinary()
+    }
+    
+    /// Searches for the op binary in multiple locations
+    private static func findOPBinary() -> URL? {
+        let fm = FileManager.default
+        
+        // List of paths to check, in priority order
+        var searchPaths: [URL] = []
+        
+        // 1. App bundle Resources folder
         if let resourceURL = Bundle.main.resourceURL {
-            let opPath = resourceURL.appendingPathComponent("op")
-            if FileManager.default.fileExists(atPath: opPath.path) {
-                self.opBinaryURL = opPath
-            } else {
-                // Fallback: check MacOS folder (for auxiliary executables)
-                if let execURL = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("op"),
-                   FileManager.default.fileExists(atPath: execURL.path) {
-                    self.opBinaryURL = execURL
-                } else {
-                    // Final fallback: system installation
-                    let systemPath = URL(fileURLWithPath: "/usr/local/bin/op")
-                    if FileManager.default.fileExists(atPath: systemPath.path) {
-                        self.opBinaryURL = systemPath
-                    } else {
-                        // Try homebrew ARM path
-                        let homebrewARM = URL(fileURLWithPath: "/opt/homebrew/bin/op")
-                        if FileManager.default.fileExists(atPath: homebrewARM.path) {
-                            self.opBinaryURL = homebrewARM
-                        } else {
-                            self.opBinaryURL = nil
-                        }
-                    }
+            searchPaths.append(resourceURL.appendingPathComponent("op"))
+        }
+        
+        // 2. App bundle MacOS folder (auxiliary executables)
+        if let execURL = Bundle.main.executableURL?.deletingLastPathComponent() {
+            searchPaths.append(execURL.appendingPathComponent("op"))
+        }
+        
+        // 3. Homebrew ARM path (most common on Apple Silicon)
+        searchPaths.append(URL(fileURLWithPath: "/opt/homebrew/bin/op"))
+        
+        // 4. Homebrew Intel / standard path
+        searchPaths.append(URL(fileURLWithPath: "/usr/local/bin/op"))
+        
+        // 5. Direct Caskroom path (in case symlink resolution fails)
+        let caskroomPath = "/opt/homebrew/Caskroom/1password-cli"
+        if let contents = try? fm.contentsOfDirectory(atPath: caskroomPath),
+           let version = contents.first {
+            searchPaths.append(URL(fileURLWithPath: "\(caskroomPath)/\(version)/op"))
+        }
+        
+        // Search each path
+        for path in searchPaths {
+            // Resolve symlinks to get the actual file
+            let resolvedPath = path.resolvingSymlinksInPath()
+            
+            // Check if file exists
+            if fm.fileExists(atPath: resolvedPath.path) {
+                // Verify it's executable by checking file attributes
+                if let attributes = try? fm.attributesOfItem(atPath: resolvedPath.path),
+                   let permissions = attributes[.posixPermissions] as? Int,
+                   permissions & 0o111 != 0 { // Check if any execute bit is set
+                    return resolvedPath
+                }
+                
+                // Fallback: also try isExecutableFile (works for some cases)
+                if fm.isExecutableFile(atPath: resolvedPath.path) {
+                    return resolvedPath
                 }
             }
-        } else {
-            self.opBinaryURL = nil
         }
+        
+        return nil
     }
     
     // MARK: - Public Methods
@@ -219,12 +245,48 @@ final class OnePasswordCLI: ObservableObject {
     /// Checks if the op CLI binary is available and ready to use
     func checkCLIAvailable() -> Bool {
         guard let url = opBinaryURL else { return false }
-        return FileManager.default.isExecutableFile(atPath: url.path)
+        let fm = FileManager.default
+        
+        // Check file exists
+        guard fm.fileExists(atPath: url.path) else { return false }
+        
+        // Check executable permission via attributes
+        if let attributes = try? fm.attributesOfItem(atPath: url.path),
+           let permissions = attributes[.posixPermissions] as? Int,
+           permissions & 0o111 != 0 {
+            return true
+        }
+        
+        // Fallback check
+        return fm.isExecutableFile(atPath: url.path)
     }
     
     /// Gets the path to the op binary (for debugging)
     func getOPBinaryPath() -> String? {
         return opBinaryURL?.path
+    }
+    
+    /// Debug helper: returns info about CLI detection
+    func getCLIDebugInfo() -> String {
+        guard let url = opBinaryURL else {
+            return "op binary not found in any search path"
+        }
+        
+        let fm = FileManager.default
+        var info = "Path: \(url.path)\n"
+        info += "Exists: \(fm.fileExists(atPath: url.path))\n"
+        
+        if let attributes = try? fm.attributesOfItem(atPath: url.path) {
+            if let permissions = attributes[.posixPermissions] as? Int {
+                info += "Permissions: \(String(permissions, radix: 8))\n"
+                info += "Executable: \(permissions & 0o111 != 0)\n"
+            }
+            if let fileType = attributes[.type] as? FileAttributeType {
+                info += "Type: \(fileType == .typeSymbolicLink ? "symlink" : "regular")\n"
+            }
+        }
+        
+        return info
     }
     
     /// Checks if desktop app integration is enabled and user can authenticate
