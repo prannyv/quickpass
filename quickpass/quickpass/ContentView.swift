@@ -34,7 +34,22 @@ struct ContentView: View {
                 }
             }
         } detail: {
-            Text("Select an item")
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Select an item")
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Current Clipboard Text:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextField("No text on clipboard", text: Binding(
+                        get: { clipboardManager.currentText ?? "" },
+                        set: { _ in }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(true)
+                }
+            }
+            .padding()
         }
     }
 

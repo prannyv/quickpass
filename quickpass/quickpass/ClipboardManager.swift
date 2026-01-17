@@ -7,10 +7,13 @@
 
 import SwiftUI
 import AppKit
+import Combine
 
 /// Monitors the macOS clipboard and publishes changes.
 /// Use as @StateObject in your app root or inject via .environmentObject()
 final class ClipboardManager: ObservableObject {
+//    var objectWillChange: ObservableObjectPublisher
+    
     
     /// The current clipboard text (nil if clipboard is empty or contains non-text)
     @Published private(set) var currentText: String?
