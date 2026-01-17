@@ -6,30 +6,25 @@
 //
 
 import SwiftUI
-import SwiftData
 
 @main
 struct quickpassApp: App {
+    // 1. Initialize the data manager
     @StateObject private var clipboardManager = ClipboardManager()
-    
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
 
     var body: some Scene {
-        WindowGroup {
+        
+        // Menu Bar Icon Setup
+        // "doc.on.clipboard" gives you the classic clipboard symbol
+        MenuBarExtra("QuickPass", systemImage: "doc.on.clipboard") {
+            
+            // The Popover Window Content
             ContentView()
                 .environmentObject(clipboardManager)
+                .frame(width: 400, height: 350)
+                
         }
-        .modelContainer(sharedModelContainer)
+        // This style allows for interactive content (TextFields, Buttons, etc.)
+        .menuBarExtraStyle(.window) 
     }
 }

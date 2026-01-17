@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import AppKit
 
 struct ContentView: View {
     // Removed @Query and modelContext as we are no longer managing the list of items
@@ -44,16 +45,55 @@ struct ContentView: View {
                     .disabled(true) // Read-only
                 }
                 
+                // Section 3: The Popup Trigger
+                // This calls PopupWindowManager, which lives in your OTHER file (SaveProposalView.swift)
+                if clipboardManager.isAPIKey {
+                    Button(action: {
+                        PopupWindowManager.shared.showSaveDialog()
+                    }) {
+                        Label("Save to 1Password", systemImage: "lock.shield.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(.blue)
+                } else {
+                    Button(action: {
+                        PopupWindowManager.shared.showSaveDialog()
+                    }) {
+                        Text("Test Popup Window")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                
                 Spacer() // Pushes content to the top
+                
+                // Footer Controls
+                HStack {
+                    Button("Quit") {
+                        NSApplication.shared.terminate(nil)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    Button("Clear") {
+                        NSPasteboard.general.clearContents()
+                        clipboardManager.refresh()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                }
             }
             .padding()
-            .navigationTitle("QuickPass") // Added a title for context
+            .navigationTitle("QuickPass")
         }
     }
 }
 
 #Preview {
     ContentView()
-        // We still inject the environment object for the preview to work
         .environmentObject(ClipboardManager())
 }
