@@ -10,8 +10,7 @@ import AppKit
 
 /// Monitors the macOS clipboard and publishes changes.
 /// Use as @StateObject in your app root or inject via .environmentObject()
-@MainActor
-class ClipboardManager: ObservableObject {
+final class ClipboardManager: ObservableObject {
     
     /// The current clipboard text (nil if clipboard is empty or contains non-text)
     @Published private(set) var currentText: String?
@@ -42,7 +41,7 @@ class ClipboardManager: ObservableObject {
         guard timer == nil else { return }
         
         timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 self?.checkForChanges()
             }
         }
