@@ -12,6 +12,10 @@ import AppKit
 struct ContentView: View {
     // Removed @Query and modelContext as we are no longer managing the list of items
     @EnvironmentObject var clipboardManager: ClipboardManager
+    
+    @Binding var isLoggedIn: Bool
+    
+    @State private var vulnerabilitiesStopped: Int = 0
 
     var body: some View {
         NavigationStack {
@@ -69,10 +73,31 @@ struct ContentView: View {
                 
                 Spacer() // Pushes content to the top
                 
+                // NEW: Vulnerability Counter Display
+                HStack {
+                    Spacer()
+                    Text("🛡️ We have stopped \(vulnerabilitiesStopped) vulnerabilities")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.vertical, 8)
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(8)
+                
                 // Footer Controls
                 HStack {
                     Button("Quit") {
                         NSApplication.shared.terminate(nil)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    // ADDED: Logout button that sets state to false
+                    Button("Logout") {
+                        isLoggedIn = false
                     }
                     .buttonStyle(.plain)
                     .foregroundColor(.secondary)
@@ -94,6 +119,7 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView()
+    // Updated preview with a constant binding
+    ContentView(isLoggedIn: .constant(true))
         .environmentObject(ClipboardManager())
 }
