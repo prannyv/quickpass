@@ -7,7 +7,7 @@
 
 import SwiftUI
 import AppKit
-import Combine
+import Combine //login, logout, you have stoppped x vulnerabilities
 
 /// Monitors the macOS clipboard and publishes changes.
 /// Use as @StateObject in your app root or inject via .environmentObject()

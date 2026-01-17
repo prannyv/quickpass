@@ -20,7 +20,11 @@ struct ContentView: View {
     @State private var isSavingQuick = false
     @State private var quickSaveError: String?
     @State private var showingSaveSuccess = false
+        
+    @Binding var isLoggedIn: Bool
     
+    @State private var vulnerabilitiesStopped: Int = 0
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -424,6 +428,18 @@ struct ContentView: View {
             }
             
             Divider()
+                
+                // NEW: Vulnerability Counter Display
+                HStack {
+                    Spacer()
+                    Text("🛡️ We have stopped \(vulnerabilitiesStopped) vulnerabilities")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.vertical, 8)
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(8)
             
             // Vaults
             VStack(alignment: .leading, spacing: 8) {
@@ -431,6 +447,20 @@ struct ContentView: View {
                     Text("Available Vaults")
                         .font(.subheadline)
                         .fontWeight(.medium)
+                    Button("Quit") {
+                        NSApplication.shared.terminate(nil)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    // ADDED: Logout button that sets state to false
+                    Button("Logout") {
+                        isLoggedIn = false
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
                     
                     Spacer()
                     
@@ -654,6 +684,7 @@ struct AddCredentialView: View {
 }
 
 #Preview {
-    ContentView()
+    // Updated preview with a constant binding
+    ContentView(isLoggedIn: .constant(true))
         .environmentObject(ClipboardManager())
 }
