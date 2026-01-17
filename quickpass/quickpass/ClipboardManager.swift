@@ -15,6 +15,9 @@ final class ClipboardManager: ObservableObject {
     /// The current clipboard text (nil if clipboard is empty or contains non-text)
     @Published private(set) var currentText: String?
     
+    /// Whether the current clipboard text appears to be an API key (based on entropy)
+    @Published private(set) var isAPIKey: Bool = false
+    
     /// The last change count from NSPasteboard (used to detect changes)
     private var lastChangeCount: Int = 0
     
@@ -70,11 +73,48 @@ final class ClipboardManager: ObservableObject {
         let pasteboard = NSPasteboard.general
         lastChangeCount = pasteboard.changeCount
         currentText = pasteboard.string(forType: .string)
+        isAPIKey = checkIsAPIKey(currentText)
     }
     
     /// Manually refresh the clipboard value
     func refresh() {
         updateClipboard()
+    }
+    
+    // MARK: - API Key Detection
+    
+    /// Checks if the given text appears to be an API key based on entropy
+    /// - Parameter text: The text to analyze
+    /// - Returns: true if entropy is above 3.5, suggesting high randomness typical of API keys
+    func checkIsAPIKey(_ text: String?) -> Bool {
+        guard let text = text, !text.isEmpty else {
+            return false
+        }
+        return calculateEntropy(text) > 3.5
+    }
+    
+    /// Calculates the Shannon entropy of a string
+    /// - Parameter text: The text to analyze
+    /// - Returns: Entropy value in bits per character (0 = no randomness, ~4.7 for random alphanumeric)
+    private func calculateEntropy(_ text: String) -> Double {
+        guard !text.isEmpty else { return 0 }
+        
+        // Count frequency of each character
+        var frequency: [Character: Int] = [:]
+        for char in text {
+            frequency[char, default: 0] += 1
+        }
+        
+        let length = Double(text.count)
+        
+        // Calculate Shannon entropy: H = -Σ p(x) * log2(p(x))
+        var entropy: Double = 0
+        for count in frequency.values {
+            let probability = Double(count) / length
+            entropy -= probability * log2(probability)
+        }
+        
+        return entropy
     }
 }
 
