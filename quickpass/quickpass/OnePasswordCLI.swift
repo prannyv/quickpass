@@ -1,0 +1,521 @@
+//
+//  OnePasswordCLI.swift
+//  quickpass
+//
+//  Created on 2026-01-17.
+//
+
+import Foundation
+import Combine
+
+/// Manages all interactions with the 1Password CLI (op)
+/// Requires the `op` binary to be bundled in the app's Resources folder
+@MainActor
+final class OnePasswordCLI: ObservableObject {
+    
+    // MARK: - Published State
+    
+    @Published private(set) var isSignedIn: Bool = false
+    @Published private(set) var currentAccount: Account?
+    @Published private(set) var availableVaults: [Vault] = []
+    @Published private(set) var lastError: OPError?
+    @Published private(set) var isLoading: Bool = false
+    
+    // MARK: - Types
+    
+    enum OPError: LocalizedError {
+        case binaryNotFound
+        case binaryNotExecutable
+        case desktopIntegrationDisabled
+        case notSignedIn
+        case commandFailed(String)
+        case parseError(String)
+        case vaultNotFound(String)
+        case itemCreateFailed(String)
+        
+        var errorDescription: String? {
+            switch self {
+            case .binaryNotFound:
+                return "1Password CLI (op) not found in app bundle"
+            case .binaryNotExecutable:
+                return "1Password CLI binary is not executable"
+            case .desktopIntegrationDisabled:
+                return "Please enable 'Integrate with 1Password CLI' in 1Password app → Settings → Developer"
+            case .notSignedIn:
+                return "Not signed in to 1Password"
+            case .commandFailed(let msg):
+                return "Command failed: \(msg)"
+            case .parseError(let msg):
+                return "Failed to parse response: \(msg)"
+            case .vaultNotFound(let name):
+                return "Vault '\(name)' not found"
+            case .itemCreateFailed(let msg):
+                return "Failed to create item: \(msg)"
+            }
+        }
+    }
+    
+    struct Account: Codable, Identifiable {
+        let id: String
+        let name: String
+        let email: String
+        let url: String
+        let userUUID: String?
+        
+        enum CodingKeys: String, CodingKey {
+            case id
+            case name
+            case email
+            case url
+            case userUUID = "user_uuid"
+        }
+    }
+    
+    struct Vault: Codable, Identifiable {
+        let id: String
+        let name: String
+    }
+    
+    struct Item: Codable, Identifiable {
+        let id: String
+        let title: String
+        let vault: VaultRef
+        let category: String
+        let createdAt: String?
+        let updatedAt: String?
+        
+        struct VaultRef: Codable {
+            let id: String
+            let name: String?
+        }
+        
+        enum CodingKeys: String, CodingKey {
+            case id, title, vault, category
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+    
+    /// Represents a field when creating a new API credential
+    struct CredentialField {
+        let label: String
+        let value: String
+        let type: FieldType
+        let section: String?
+        
+        enum FieldType: String {
+            case text = "text"
+            case concealed = "concealed"
+            case url = "url"
+            case email = "email"
+            case date = "date"
+            case monthYear = "monthYear"
+            case phone = "phone"
+        }
+        
+        init(label: String, value: String, type: FieldType = .text, section: String? = nil) {
+            self.label = label
+            self.value = value
+            self.type = type
+            self.section = section
+        }
+        
+        /// Formats the field as a CLI assignment string
+        var cliAssignment: String {
+            var assignment = ""
+            if let section = section {
+                assignment += "\(section)."
+            }
+            assignment += "\(label)[\(type.rawValue)]=\(value)"
+            return assignment
+        }
+    }
+    
+    /// Configuration for creating a new API credential
+    struct NewAPICredential {
+        let title: String
+        let vault: String
+        let credential: String // The main API key/token
+        let username: String?
+        let type: String?       // e.g., "personal", "production", "development"
+        let filename: String?   // For file-based credentials
+        let validFrom: Date?
+        let expiresAt: Date?
+        let hostname: String?
+        let notes: String?
+        let tags: [String]
+        let customFields: [CredentialField]
+        
+        init(
+            title: String,
+            vault: String,
+            credential: String,
+            username: String? = nil,
+            type: String? = nil,
+            filename: String? = nil,
+            validFrom: Date? = nil,
+            expiresAt: Date? = nil,
+            hostname: String? = nil,
+            notes: String? = nil,
+            tags: [String] = [],
+            customFields: [CredentialField] = []
+        ) {
+            self.title = title
+            self.vault = vault
+            self.credential = credential
+            self.username = username
+            self.type = type
+            self.filename = filename
+            self.validFrom = validFrom
+            self.expiresAt = expiresAt
+            self.hostname = hostname
+            self.notes = notes
+            self.tags = tags
+            self.customFields = customFields
+        }
+    }
+    
+    // MARK: - Private Properties
+    
+    private let opBinaryURL: URL?
+    private let decoder = JSONDecoder()
+    
+    // MARK: - Initialization
+    
+    init() {
+        // Look for op binary in the app bundle's Resources folder
+        if let resourceURL = Bundle.main.resourceURL {
+            let opPath = resourceURL.appendingPathComponent("op")
+            if FileManager.default.fileExists(atPath: opPath.path) {
+                self.opBinaryURL = opPath
+            } else {
+                // Fallback: check MacOS folder (for auxiliary executables)
+                if let execURL = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("op"),
+                   FileManager.default.fileExists(atPath: execURL.path) {
+                    self.opBinaryURL = execURL
+                } else {
+                    // Final fallback: system installation
+                    let systemPath = URL(fileURLWithPath: "/usr/local/bin/op")
+                    if FileManager.default.fileExists(atPath: systemPath.path) {
+                        self.opBinaryURL = systemPath
+                    } else {
+                        // Try homebrew ARM path
+                        let homebrewARM = URL(fileURLWithPath: "/opt/homebrew/bin/op")
+                        if FileManager.default.fileExists(atPath: homebrewARM.path) {
+                            self.opBinaryURL = homebrewARM
+                        } else {
+                            self.opBinaryURL = nil
+                        }
+                    }
+                }
+            }
+        } else {
+            self.opBinaryURL = nil
+        }
+    }
+    
+    // MARK: - Public Methods
+    
+    /// Checks if the op CLI binary is available and ready to use
+    func checkCLIAvailable() -> Bool {
+        guard let url = opBinaryURL else { return false }
+        return FileManager.default.isExecutableFile(atPath: url.path)
+    }
+    
+    /// Gets the path to the op binary (for debugging)
+    func getOPBinaryPath() -> String? {
+        return opBinaryURL?.path
+    }
+    
+    /// Checks if desktop app integration is enabled and user can authenticate
+    /// This will trigger a biometric/password prompt from the 1Password app
+    func signIn() async {
+        isLoading = true
+        lastError = nil
+        
+        defer { isLoading = false }
+        
+        do {
+            // Try to list accounts - this will trigger auth prompt if needed
+            let accounts = try await listAccounts()
+            
+            if let firstAccount = accounts.first {
+                currentAccount = firstAccount
+                isSignedIn = true
+                
+                // Load available vaults
+                try await refreshVaults()
+            } else {
+                lastError = .notSignedIn
+                isSignedIn = false
+            }
+        } catch let error as OPError {
+            lastError = error
+            isSignedIn = false
+        } catch {
+            lastError = .commandFailed(error.localizedDescription)
+            isSignedIn = false
+        }
+    }
+    
+    /// Signs out and clears local state
+    func signOut() {
+        isSignedIn = false
+        currentAccount = nil
+        availableVaults = []
+        lastError = nil
+    }
+    
+    /// Refreshes the list of available vaults
+    func refreshVaults() async throws {
+        availableVaults = try await listVaults()
+    }
+    
+    /// Lists all accounts configured in 1Password
+    func listAccounts() async throws -> [Account] {
+        let result = try await runOP(arguments: ["account", "list", "--format", "json"])
+        
+        guard let data = result.stdout.data(using: .utf8) else {
+            throw OPError.parseError("Invalid response data")
+        }
+        
+        do {
+            return try decoder.decode([Account].self, from: data)
+        } catch {
+            // If no accounts, op returns empty or error
+            if result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return []
+            }
+            throw OPError.parseError(error.localizedDescription)
+        }
+    }
+    
+    /// Lists all vaults accessible to the current user
+    func listVaults() async throws -> [Vault] {
+        let result = try await runOP(arguments: ["vault", "list", "--format", "json"])
+        
+        guard let data = result.stdout.data(using: .utf8) else {
+            throw OPError.parseError("Invalid response data")
+        }
+        
+        return try decoder.decode([Vault].self, from: data)
+    }
+    
+    /// Creates a new API credential in the specified vault
+    /// - Parameter credential: The credential configuration
+    /// - Returns: The created item
+    @discardableResult
+    func createAPICredential(_ credential: NewAPICredential) async throws -> Item {
+        var arguments = [
+            "item", "create",
+            "--category", "API Credential",
+            "--title", credential.title,
+            "--vault", credential.vault,
+            "--format", "json"
+        ]
+        
+        // Add the main credential field
+        arguments.append("credential=\(credential.credential)")
+        
+        // Add optional built-in fields
+        if let username = credential.username, !username.isEmpty {
+            arguments.append("username=\(username)")
+        }
+        
+        if let type = credential.type, !type.isEmpty {
+            arguments.append("type=\(type)")
+        }
+        
+        if let filename = credential.filename, !filename.isEmpty {
+            arguments.append("filename=\(filename)")
+        }
+        
+        if let hostname = credential.hostname, !hostname.isEmpty {
+            arguments.append("hostname=\(hostname)")
+        }
+        
+        // Add dates if provided
+        if let validFrom = credential.validFrom {
+            let formatter = ISO8601DateFormatter()
+            arguments.append("valid from=\(formatter.string(from: validFrom))")
+        }
+        
+        if let expiresAt = credential.expiresAt {
+            let formatter = ISO8601DateFormatter()
+            arguments.append("expires=\(formatter.string(from: expiresAt))")
+        }
+        
+        // Add notes
+        if let notes = credential.notes, !notes.isEmpty {
+            arguments.append("notesPlain=\(notes)")
+        }
+        
+        // Add tags
+        if !credential.tags.isEmpty {
+            arguments.append("--tags")
+            arguments.append(credential.tags.joined(separator: ","))
+        }
+        
+        // Add custom fields
+        for field in credential.customFields {
+            arguments.append(field.cliAssignment)
+        }
+        
+        let result = try await runOP(arguments: arguments)
+        
+        guard let data = result.stdout.data(using: .utf8) else {
+            throw OPError.parseError("Invalid response data")
+        }
+        
+        do {
+            return try decoder.decode(Item.self, from: data)
+        } catch {
+            throw OPError.itemCreateFailed(result.stderr.isEmpty ? error.localizedDescription : result.stderr)
+        }
+    }
+    
+    /// Creates a simple API credential with just title, vault, and the key
+    /// - Parameters:
+    ///   - title: Name of the credential
+    ///   - apiKey: The API key/token value
+    ///   - vault: Vault to store in (defaults to first available vault)
+    /// - Returns: The created item
+    @discardableResult
+    func createSimpleAPICredential(title: String, apiKey: String, vault: String? = nil) async throws -> Item {
+        let targetVault = vault ?? availableVaults.first?.name ?? "Private"
+        
+        let credential = NewAPICredential(
+            title: title,
+            vault: targetVault,
+            credential: apiKey
+        )
+        
+        return try await createAPICredential(credential)
+    }
+    
+    /// Lists items in a specific vault
+    func listItems(in vault: String? = nil) async throws -> [Item] {
+        var arguments = ["item", "list", "--format", "json"]
+        
+        if let vault = vault {
+            arguments.append("--vault")
+            arguments.append(vault)
+        }
+        
+        let result = try await runOP(arguments: arguments)
+        
+        guard let data = result.stdout.data(using: .utf8) else {
+            throw OPError.parseError("Invalid response data")
+        }
+        
+        return try decoder.decode([Item].self, from: data)
+    }
+    
+    /// Gets details of a specific item
+    func getItem(id: String, vault: String? = nil) async throws -> Item {
+        var arguments = ["item", "get", id, "--format", "json"]
+        
+        if let vault = vault {
+            arguments.append("--vault")
+            arguments.append(vault)
+        }
+        
+        let result = try await runOP(arguments: arguments)
+        
+        guard let data = result.stdout.data(using: .utf8) else {
+            throw OPError.parseError("Invalid response data")
+        }
+        
+        return try decoder.decode(Item.self, from: data)
+    }
+    
+    /// Deletes an item
+    func deleteItem(id: String, vault: String? = nil) async throws {
+        var arguments = ["item", "delete", id]
+        
+        if let vault = vault {
+            arguments.append("--vault")
+            arguments.append(vault)
+        }
+        
+        _ = try await runOP(arguments: arguments)
+    }
+    
+    /// Checks the version of the op CLI
+    func getVersion() async throws -> String {
+        let result = try await runOP(arguments: ["--version"])
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    // MARK: - Private Methods
+    
+    private struct ProcessResult {
+        let exitCode: Int32
+        let stdout: String
+        let stderr: String
+    }
+    
+    private func runOP(arguments: [String]) async throws -> ProcessResult {
+        guard let opURL = opBinaryURL else {
+            throw OPError.binaryNotFound
+        }
+        
+        guard FileManager.default.isExecutableFile(atPath: opURL.path) else {
+            throw OPError.binaryNotExecutable
+        }
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = opURL
+                process.arguments = arguments
+                
+                // Set up environment for desktop app integration
+                var environment = ProcessInfo.processInfo.environment
+                environment["OP_BIOMETRIC_UNLOCK_ENABLED"] = "true"
+                process.environment = environment
+                
+                let stdoutPipe = Pipe()
+                let stderrPipe = Pipe()
+                process.standardOutput = stdoutPipe
+                process.standardError = stderrPipe
+                
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    
+                    let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                    let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                    
+                    let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+                    let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+                    
+                    let result = ProcessResult(
+                        exitCode: process.terminationStatus,
+                        stdout: stdout,
+                        stderr: stderr
+                    )
+                    
+                    // Check for common errors
+                    if process.terminationStatus != 0 {
+                        if stderr.contains("not currently signed in") || stderr.contains("session expired") {
+                            continuation.resume(throwing: OPError.notSignedIn)
+                            return
+                        }
+                        if stderr.contains("connecting to desktop app") || stderr.contains("not connected") {
+                            continuation.resume(throwing: OPError.desktopIntegrationDisabled)
+                            return
+                        }
+                        continuation.resume(throwing: OPError.commandFailed(stderr.isEmpty ? "Exit code: \(process.terminationStatus)" : stderr))
+                        return
+                    }
+                    
+                    continuation.resume(returning: result)
+                } catch {
+                    continuation.resume(throwing: OPError.commandFailed(error.localizedDescription))
+                }
+            }
+        }
+    }
+}
+
