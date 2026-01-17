@@ -48,6 +48,18 @@ struct ContentView: View {
                     .textFieldStyle(.roundedBorder)
                     .disabled(true)
                 }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Is API Key:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextField("", text: Binding(
+                        get: { String(clipboardManager.isAPIKey) },
+                        set: { _ in }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(true)
+                }
             }
             .padding()
         }
