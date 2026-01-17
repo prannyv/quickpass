@@ -10,6 +10,8 @@ import SwiftData
 
 @main
 struct quickpassApp: App {
+    @StateObject private var clipboardManager = ClipboardManager()
+    
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             Item.self,
@@ -26,6 +28,7 @@ struct quickpassApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(clipboardManager)
         }
         .modelContainer(sharedModelContainer)
     }
