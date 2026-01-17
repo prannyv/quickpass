@@ -93,7 +93,7 @@ final class ClipboardManager: ObservableObject {
         guard let text = text, !text.isEmpty else {
             return false
         }
-        return calculateEntropy(text) > 3.5
+        return v2CheckIsAPIKey(text)
     }
     
     /// Calculates the Shannon entropy of a string

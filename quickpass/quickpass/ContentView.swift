@@ -15,6 +15,11 @@ struct ContentView: View {
     
     @State private var showingAddCredential = false
     @State private var showingSettings = false
+    @State private var showingQuickSave = false
+    @State private var quickSaveTitle = ""
+    @State private var isSavingQuick = false
+    @State private var quickSaveError: String?
+    @State private var showingSaveSuccess = false
     
     var body: some View {
         NavigationStack {
@@ -51,6 +56,130 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showingAddCredential) {
                 AddCredentialView(onePassword: onePassword, clipboardManager: clipboardManager)
+            }
+            .alert("Saved!", isPresented: $showingSaveSuccess) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("API credential saved to 1Password")
+            }
+        }
+    }
+    
+    // MARK: - Quick Save Popover
+    
+    private var quickSavePopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Quick Save to 1Password")
+                .font(.headline)
+            
+            TextField("Title", text: $quickSaveTitle)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 250)
+            
+            if !onePassword.availableVaults.isEmpty {
+                HStack {
+                    Text("Vault:")
+                        .foregroundColor(.secondary)
+                    Text(onePassword.availableVaults.first?.name ?? "Default")
+                        .fontWeight(.medium)
+                }
+                .font(.caption)
+            }
+            
+            // Preview of the key (truncated)
+            if let key = clipboardManager.currentText {
+                HStack {
+                    Text("Key:")
+                        .foregroundColor(.secondary)
+                    Text(truncateKey(key))
+                        .font(.system(.caption, design: .monospaced))
+                }
+                .font(.caption)
+            }
+            
+            if let error = quickSaveError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+            
+            HStack {
+                Button("Cancel") {
+                    showingQuickSave = false
+                    quickSaveError = nil
+                }
+                .buttonStyle(.bordered)
+                
+                Spacer()
+                
+                Button {
+                    performQuickSave()
+                } label: {
+                    if isSavingQuick {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text("Save")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(quickSaveTitle.isEmpty || isSavingQuick)
+            }
+        }
+        .padding()
+        .frame(width: 300)
+    }
+    
+    // MARK: - Helper Functions
+    
+    private func generateDefaultTitle() -> String {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "MMM d, yyyy HH:mm"
+        return "API Key - \(dateFormatter.string(from: Date()))"
+    }
+    
+    private func truncateKey(_ key: String) -> String {
+        if key.count <= 20 {
+            return key
+        }
+        let prefix = key.prefix(8)
+        let suffix = key.suffix(8)
+        return "\(prefix)...\(suffix)"
+    }
+    
+    private func performQuickSave() {
+        guard let apiKey = clipboardManager.currentText, !apiKey.isEmpty else {
+            quickSaveError = "No API key in clipboard"
+            return
+        }
+        
+        guard let vault = onePassword.availableVaults.first else {
+            quickSaveError = "No vault available"
+            return
+        }
+        
+        isSavingQuick = true
+        quickSaveError = nil
+        
+        Task {
+            do {
+                try await onePassword.createSimpleAPICredential(
+                    title: quickSaveTitle,
+                    apiKey: apiKey,
+                    vault: vault.name
+                )
+                
+                await MainActor.run {
+                    isSavingQuick = false
+                    showingQuickSave = false
+                    showingSaveSuccess = true
+                    quickSaveTitle = ""
+                }
+            } catch {
+                await MainActor.run {
+                    isSavingQuick = false
+                    quickSaveError = error.localizedDescription
+                }
             }
         }
     }
@@ -118,14 +247,32 @@ struct ContentView: View {
                     
                     // Quick save button (only shown when API key detected and signed in)
                     if clipboardManager.isAPIKey && onePassword.isSignedIn {
-                        Button {
-                            showingAddCredential = true
-                        } label: {
-                            Label("Save to 1Password", systemImage: "arrow.right.circle.fill")
-                                .font(.caption)
+                        HStack(spacing: 8) {
+                            // Quick save with popover
+                            Button {
+                                quickSaveTitle = generateDefaultTitle()
+                                showingQuickSave = true
+                            } label: {
+                                Label("Quick Save", systemImage: "bolt.fill")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .popover(isPresented: $showingQuickSave) {
+                                quickSavePopover
+                            }
+                            
+                            // Full form button
+                            Button {
+                                showingAddCredential = true
+                            } label: {
+                                Image(systemName: "ellipsis")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("More options...")
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
                     }
                 }
             }
