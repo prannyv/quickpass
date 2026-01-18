@@ -494,8 +494,12 @@ struct ProposalView: View {
                 
                 _ = try await onePassword.createAPICredential(credential)
                 
-                isSaving = false
-                showSuccess = true
+                // Update state with animation, wrapped in a small delay to avoid constraint conflicts
+                try? await Task.sleep(nanoseconds: 50_000_000) // 0.05 seconds to let layout complete
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                    isSaving = false
+                    showSuccess = true
+                }
                 
                 // Auto-close after success and clear clipboard when window closes
                 try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5 seconds
@@ -503,8 +507,12 @@ struct ProposalView: View {
                 clipboardManager.clearClipboard()
                 onClose()
             } catch {
-                isSaving = false
-                saveError = error.localizedDescription
+                // Small delay before error state update
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                    isSaving = false
+                    saveError = error.localizedDescription
+                }
             }
         }
     }
@@ -578,8 +586,6 @@ struct ProposalView: View {
                     .transition(.scale.combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showSuccess)
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: saveError)
         .padding(16)
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
