@@ -11,7 +11,8 @@ import AppKit
 
 struct ContentView: View {
     @EnvironmentObject var clipboardManager: ClipboardManager
-    @StateObject private var onePassword = OnePasswordCLI()
+    // EDITED: Use EnvironmentObject to share the session and fix double-login
+    @EnvironmentObject var onePassword: OnePasswordCLI
     
     @State private var showingAddCredential = false
     @State private var showingSettings = false
@@ -20,9 +21,8 @@ struct ContentView: View {
     @State private var isSavingQuick = false
     @State private var quickSaveError: String?
     @State private var showingSaveSuccess = false
-        
-    @Binding var isLoggedIn: Bool
     
+    //Tracking logic
     @State private var vulnerabilitiesStopped: Int = 0
 
     var body: some View {
@@ -44,6 +44,23 @@ struct ContentView: View {
                     }
                     .padding()
                 }
+                
+                // NEW: Sticky Footer for Clear action (stays at bottom)
+                if onePassword.isSignedIn {
+                    Divider()
+                    HStack {
+                        Spacer()
+                        Button("Clear Clipboard") {
+                            NSPasteboard.general.clearContents()
+                            clipboardManager.refresh()
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                }
             }
             .navigationTitle("QuickPass")
             .toolbar {
@@ -56,6 +73,13 @@ struct ContentView: View {
                         }
                         .help("Add API Credential")
                     }
+                }
+            }
+            
+            // Logic: Increment counter whenever a new API key is detected
+            .onChange(of: clipboardManager.isAPIKey) { newValue in
+                if newValue {
+                    vulnerabilitiesStopped += 1
                 }
             }
             .sheet(isPresented: $showingAddCredential) {
@@ -400,36 +424,37 @@ struct ContentView: View {
     }
     
     private var signedInView: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Account info
-            if let account = onePassword.currentAccount {
-                HStack {
-                    Image(systemName: "person.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.accentColor)
-                    
-                    VStack(alignment: .leading) {
-                        Text(account.name)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        Text(account.email)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 12) {
+                // Account info section (KEEP THIS - has your primary Disconnect button)
+                if let account = onePassword.currentAccount {
+                    HStack {
+                        Image(systemName: "person.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.accentColor)
+                        
+                        VStack(alignment: .leading) {
+                            Text(account.name)
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                            Text(account.email)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        // THIS IS YOUR PRIMARY DISCONNECT BUTTON
+                        Button("Disconnect") {
+                            onePassword.signOut()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
-                    
-                    Spacer()
-                    
-                    Button("Disconnect") {
-                        onePassword.signOut()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 }
-            }
-            
-            Divider()
                 
-                // NEW: Vulnerability Counter Display
+                Divider()
+                
+                // Vulnerability Counter
                 HStack {
                     Spacer()
                     Text("🛡️ We have stopped \(vulnerabilitiesStopped) vulnerabilities")
@@ -440,57 +465,25 @@ struct ContentView: View {
                 .padding(.vertical, 8)
                 .background(Color.secondary.opacity(0.1))
                 .cornerRadius(8)
-            
-            // Vaults
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Available Vaults")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                    Button("Quit") {
-                        NSApplication.shared.terminate(nil)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundColor(.secondary)
-                    
-                    Spacer()
-                    
-                    // ADDED: Logout button that sets state to false
-                    Button("Logout") {
-                        isLoggedIn = false
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundColor(.secondary)
-                    
-                    Spacer()
-                    
-                    Button {
-                        Task {
-                            try? await onePassword.refreshVaults()
-                        }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
-                }
                 
-                if onePassword.availableVaults.isEmpty {
-                    Text("No vaults available")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                } else {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(onePassword.availableVaults) { vault in
-                                VaultBadge(name: vault.name)
+                // Vaults List (EDTED: Redundant footer buttons removed)
+                VStack(alignment: .leading, spacing: 8) {
+                    if onePassword.availableVaults.isEmpty {
+                        Text("No vaults available")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(onePassword.availableVaults) { vault in
+                                    VaultBadge(name: vault.name)
+                                }
                             }
                         }
                     }
                 }
             }
         }
-    }
 }
 
 // MARK: - Vault Badge
@@ -685,6 +678,6 @@ struct AddCredentialView: View {
 
 #Preview {
     // Updated preview with a constant binding
-    ContentView(isLoggedIn: .constant(true))
+    ContentView()
         .environmentObject(ClipboardManager())
 }

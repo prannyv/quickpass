@@ -9,44 +9,36 @@ import SwiftUI
 
 struct LoginView: View {
     // This binding connects to the state in quickpassApp.swift to handle redirection
-    @Binding var isLoggedIn: Bool
+    @EnvironmentObject var onePassword: OnePasswordCLI
     
     var body: some View {
-        VStack(spacing: 30) {
-            VStack(spacing: 12) {
-                Image(systemName: "lock.shield.fill")
-                    .font(.system(size: 50))
-                    .foregroundColor(.blue)
-                
-                Text("Welcome to QuickPass")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                
-                Text("Securely detect and save API keys.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            
-            Button(action: {
-                // Updates the parent state to trigger the redirect to ContentView
-                isLoggedIn = true
-            }) {
-                HStack {
-                    Image(systemName: "key.fill")
-                    Text("Login to 1Password")
-                        .fontWeight(.medium)
+            VStack(spacing: 30) {
+                // ... (keep your existing header icons and text)
+
+                Button(action: {
+                    Task {
+                        await onePassword.signIn() // This triggers the 1Password prompt
+                    }
+                }) {
+                    HStack {
+                        if onePassword.isLoading {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "key.fill")
+                            Text("Connect to 1Password")
+                                .fontWeight(.medium)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(onePassword.isLoading)
+
+                Text("Requires 1Password CLI integration enabled.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(.blue)
-            
-            // FIX: Changed .foregroundColor(.tertiaryLabel) to .foregroundStyle(.tertiary)
-            Text("No authentication required for this preview.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            .padding(40)
         }
-        .padding(40)
-    }
 }
