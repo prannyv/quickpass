@@ -13,7 +13,6 @@ import AppKit
 
 struct ContentView: View {
     @EnvironmentObject var clipboardManager: ClipboardManager
-    // EDITED: Use EnvironmentObject to share the session and fix double-login
     @EnvironmentObject var onePassword: OnePasswordCLI
     
     @State private var showingAddCredential = false
@@ -43,13 +42,11 @@ struct ContentView: View {
                         
                         // 1Password section
                         onePasswordSection
-                        
-                        // (Button removed: Popup now triggers automatically)
                     }
                     .padding()
                 }
                 
-                // NEW: Sticky Footer for Clear action (stays at bottom)
+                // Sticky Footer for Clear action
                 if onePassword.isSignedIn {
                     Divider()
                     HStack {
@@ -80,17 +77,16 @@ struct ContentView: View {
                 }
             }
             
-            // Logic 1: Increment counter whenever a new API key is detected
+            // Logic 1: Increment counter
             .onChange(of: clipboardManager.isAPIKey) { newValue in
                 if newValue {
                     vulnerabilitiesStopped += 1
                 }
             }
             
-            // Logic 2: Auto-trigger popup when clipboard changes and contains an API Key
+            // Logic 2: Auto-trigger popup
             .onChange(of: clipboardManager.currentText) { newValue in
                 if clipboardManager.isAPIKey {
-                    // Delay slightly to ensure UI is ready, then show popup
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                         OnePasswordWindowManager.shared.showPopup(
                             clipboardManager: clipboardManager,
@@ -111,139 +107,16 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - Quick Save Popover (Internal)
-    
-    private var quickSavePopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Quick Save to 1Password")
-                .font(.headline)
-            
-            TextField("Title", text: $quickSaveTitle)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 250)
-            
-            if !onePassword.availableVaults.isEmpty {
-                HStack {
-                    Text("Vault:")
-                        .foregroundColor(.secondary)
-                    Text(onePassword.availableVaults.first?.name ?? "Default")
-                        .fontWeight(.medium)
-                }
-                .font(.caption)
-            }
-            
-            // Preview of the key (truncated)
-            if let key = clipboardManager.currentText {
-                HStack {
-                    Text("Key:")
-                        .foregroundColor(.secondary)
-                    Text(truncateKey(key))
-                        .font(.system(.caption, design: .monospaced))
-                }
-                .font(.caption)
-            }
-            
-            if let error = quickSaveError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundColor(.red)
-            }
-            
-            HStack {
-                Button("Cancel") {
-                    showingQuickSave = false
-                    quickSaveError = nil
-                }
-                .buttonStyle(.bordered)
-                
-                Spacer()
-                
-                Button {
-                    performQuickSave()
-                } label: {
-                    if isSavingQuick {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Text("Save")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(quickSaveTitle.isEmpty || isSavingQuick)
-            }
-        }
-        .padding()
-        .frame(width: 300)
-    }
-    
-    // MARK: - Helper Functions
-    
-    private func generateDefaultTitle() -> String {
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "MMM d, yyyy HH:mm"
-        return "API Key - \(dateFormatter.string(from: Date()))"
-    }
-    
-    private func truncateKey(_ key: String) -> String {
-        if key.count <= 20 {
-            return key
-        }
-        let prefix = key.prefix(8)
-        let suffix = key.suffix(8)
-        return "\(prefix)...\(suffix)"
-    }
-    
-    private func performQuickSave() {
-        guard let apiKey = clipboardManager.currentText, !apiKey.isEmpty else {
-            quickSaveError = "No API key in clipboard"
-            return
-        }
-        
-        guard let vault = onePassword.availableVaults.first else {
-            quickSaveError = "No vault available"
-            return
-        }
-        
-        isSavingQuick = true
-        quickSaveError = nil
-        
-        Task {
-            do {
-                try await onePassword.createSimpleAPICredential(
-                    title: quickSaveTitle,
-                    apiKey: apiKey,
-                    vault: vault.name
-                )
-                
-                await MainActor.run {
-                    isSavingQuick = false
-                    showingQuickSave = false
-                    showingSaveSuccess = true
-                    quickSaveTitle = ""
-                }
-            } catch {
-                await MainActor.run {
-                    isSavingQuick = false
-                    quickSaveError = error.localizedDescription
-                }
-            }
-        }
-    }
-    
     // MARK: - Connection Status Bar
-    
     private var connectionStatusBar: some View {
         HStack {
             Circle()
                 .fill(onePassword.isSignedIn ? Color.green : Color.orange)
                 .frame(width: 8, height: 8)
-            
             Text(onePassword.isSignedIn ? "Connected to 1Password" : "Not connected")
                 .font(.caption)
                 .foregroundColor(.secondary)
-            
             Spacer()
-            
             if let account = onePassword.currentAccount {
                 Text(account.email)
                     .font(.caption)
@@ -256,18 +129,15 @@ struct ContentView: View {
     }
     
     // MARK: - Clipboard Section
-    
     private var clipboardSection: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Clipboard Monitor", systemImage: "doc.on.clipboard")
                     .font(.headline)
-                
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Current Content:")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
                     Text(clipboardManager.currentText ?? "Empty")
                         .font(.system(.body, design: .monospaced))
                         .lineLimit(3)
@@ -277,49 +147,15 @@ struct ContentView: View {
                         .background(Color(nsColor: .textBackgroundColor))
                         .cornerRadius(6)
                 }
-                
                 HStack {
-                    // API Key detection indicator
                     HStack(spacing: 6) {
                         Image(systemName: clipboardManager.isAPIKey ? "checkmark.circle.fill" : "xmark.circle")
                             .foregroundColor(clipboardManager.isAPIKey ? .green : .secondary)
-                        
                         Text(clipboardManager.isAPIKey ? "Looks like an API key" : "Not detected as API key")
                             .font(.caption)
                             .foregroundColor(clipboardManager.isAPIKey ? .primary : .secondary)
                     }
-                    
                     Spacer()
-                    
-                    // Quick save button (only shown when API key detected and signed in)
-                    if clipboardManager.isAPIKey && onePassword.isSignedIn {
-                        HStack(spacing: 8) {
-                            // Quick save with popover
-                            Button {
-                                quickSaveTitle = generateDefaultTitle()
-                                showingQuickSave = true
-                            } label: {
-                                Label("Quick Save", systemImage: "bolt.fill")
-                                    .font(.caption)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .popover(isPresented: $showingQuickSave) {
-                                quickSavePopover
-                            }
-                            
-                            // Full form button
-                            Button {
-                                showingAddCredential = true
-                            } label: {
-                                Image(systemName: "ellipsis")
-                                    .font(.caption)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .help("More options...")
-                        }
-                    }
                 }
             }
             .padding(4)
@@ -327,13 +163,11 @@ struct ContentView: View {
     }
     
     // MARK: - 1Password Section
-    
     private var onePasswordSection: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 16) {
                 Label("1Password", systemImage: "lock.shield")
                     .font(.headline)
-                
                 if onePassword.isLoading {
                     HStack {
                         ProgressView()
@@ -346,8 +180,6 @@ struct ContentView: View {
                 } else {
                     signedOutView
                 }
-                
-                // Error display
                 if let error = onePassword.lastError {
                     HStack {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -370,17 +202,13 @@ struct ContentView: View {
             Text("Connect to 1Password to automatically save your API keys")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-            
             Button {
-                Task {
-                    await onePassword.signIn()
-                }
+                Task { await onePassword.signIn() }
             } label: {
                 Label("Connect to 1Password", systemImage: "person.badge.key")
             }
             .buttonStyle(.borderedProminent)
             
-            // CLI availability check
             if !onePassword.checkCLIAvailable() {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
@@ -390,131 +218,74 @@ struct ContentView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
-                    if let path = onePassword.getOPBinaryPath() {
-                        Text("Found at: \(path) (but not executable)")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    } else {
-                        Text("Install via: brew install 1password-cli")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Image(systemName: "checkmark.circle")
-                            .foregroundColor(.green)
-                        Text("1Password CLI found")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    if let path = onePassword.getOPBinaryPath() {
-                        Text(path)
-                            .font(.caption2)
-                            .foregroundColor(.secondary.opacity(0.7))
-                    }
+                    Text("Install via: brew install 1password-cli")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
             }
-            
-            // Setup instructions
-            DisclosureGroup("Setup Instructions") {
-                VStack(alignment: .leading, spacing: 8) {
-                    setupInstructionRow(number: 1, text: "Install 1Password desktop app")
-                    setupInstructionRow(number: 2, text: "Open 1Password → Settings → Developer")
-                    setupInstructionRow(number: 3, text: "Enable \"Integrate with 1Password CLI\"")
-                    setupInstructionRow(number: 4, text: "Click \"Connect to 1Password\" above")
-                }
-                .padding(.top, 8)
-            }
-            .font(.caption)
         }
-    }
-    
-    private func setupInstructionRow(number: Int, text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text("\(number).")
-                .fontWeight(.medium)
-                .frame(width: 20, alignment: .trailing)
-            Text(text)
-        }
-        .foregroundColor(.secondary)
     }
     
     private var signedInView: some View {
-            VStack(alignment: .leading, spacing: 12) {
-                // Account info section (KEEP THIS - has your primary Disconnect button)
-                if let account = onePassword.currentAccount {
-                    HStack {
-                        Image(systemName: "person.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(.accentColor)
-                        
-                        VStack(alignment: .leading) {
-                            Text(account.name)
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                            Text(account.email)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        // THIS IS YOUR PRIMARY DISCONNECT BUTTON
-                        Button("Disconnect") {
-                            onePassword.signOut()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
-                }
-                
-                Divider()
-                
-                // Vulnerability Counter
+        VStack(alignment: .leading, spacing: 12) {
+            if let account = onePassword.currentAccount {
                 HStack {
-                    Spacer()
-                    Text("🛡️ We have stopped \(vulnerabilitiesStopped) vulnerabilities")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(.vertical, 8)
-                .background(Color.secondary.opacity(0.1))
-                .cornerRadius(8)
-                
-                // Vaults List (EDTED: Redundant footer buttons removed)
-                VStack(alignment: .leading, spacing: 8) {
-                    if onePassword.availableVaults.isEmpty {
-                        Text("No vaults available")
+                    Image(systemName: "person.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.accentColor)
+                    VStack(alignment: .leading) {
+                        Text(account.name)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Text(account.email)
                             .font(.caption)
                             .foregroundColor(.secondary)
-                    } else {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(onePassword.availableVaults) { vault in
-                                    VaultBadge(name: vault.name)
-                                }
+                    }
+                    Spacer()
+                    Button("Disconnect") { onePassword.signOut() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            Divider()
+            HStack {
+                Spacer()
+                Text("🛡️ We have stopped \(vulnerabilitiesStopped) vulnerabilities")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.vertical, 8)
+            .background(Color.secondary.opacity(0.1))
+            .cornerRadius(8)
+            
+            VStack(alignment: .leading, spacing: 8) {
+                if onePassword.availableVaults.isEmpty {
+                    Text("No vaults available")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(onePassword.availableVaults) { vault in
+                                VaultBadge(name: vault.name)
                             }
                         }
                     }
                 }
             }
         }
+    }
 }
 
-// MARK: - HELPER VIEWS
+// MARK: - HELPER VIEWS (Main App)
 
 struct VaultBadge: View {
     let name: String
-    
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: "lock.fill")
-                .font(.caption2)
-            Text(name)
-                .font(.caption)
+            Image(systemName: "lock.fill").font(.caption2)
+            Text(name).font(.caption)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -537,7 +308,6 @@ struct AddCredentialView: View {
     @State private var hostname = ""
     @State private var notes = ""
     @State private var tags = ""
-    
     @State private var isSaving = false
     @State private var showingSuccess = false
     @State private var errorMessage: String?
@@ -545,11 +315,8 @@ struct AddCredentialView: View {
     var body: some View {
         NavigationStack {
             Form {
-                // Required fields
                 Section("Required") {
-                    TextField("Title", text: $title)
-                        .textFieldStyle(.roundedBorder)
-                    
+                    TextField("Title", text: $title).textFieldStyle(.roundedBorder)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text("API Key / Token")
@@ -562,47 +329,28 @@ struct AddCredentialView: View {
                                 .font(.caption)
                             }
                         }
-                        SecureField("Enter or paste your API key", text: $credential)
-                            .textFieldStyle(.roundedBorder)
+                        SecureField("Enter or paste your API key", text: $credential).textFieldStyle(.roundedBorder)
                     }
-                    
                     Picker("Vault", selection: $selectedVault) {
                         ForEach(onePassword.availableVaults) { vault in
                             Text(vault.name).tag(vault.name)
                         }
                     }
                 }
-                
-                // Optional fields
                 Section("Optional") {
-                    TextField("Username", text: $username)
-                        .textFieldStyle(.roundedBorder)
-                    
-                    TextField("Type (e.g., production, development)", text: $credentialType)
-                        .textFieldStyle(.roundedBorder)
-                    
-                    TextField("Hostname / URL", text: $hostname)
-                        .textFieldStyle(.roundedBorder)
-                    
-                    TextField("Tags (comma-separated)", text: $tags)
-                        .textFieldStyle(.roundedBorder)
+                    TextField("Username", text: $username).textFieldStyle(.roundedBorder)
+                    TextField("Type", text: $credentialType).textFieldStyle(.roundedBorder)
+                    TextField("Hostname / URL", text: $hostname).textFieldStyle(.roundedBorder)
+                    TextField("Tags (comma-separated)", text: $tags).textFieldStyle(.roundedBorder)
                 }
-                
-                // Notes
                 Section("Notes") {
-                    TextEditor(text: $notes)
-                        .frame(minHeight: 60)
-                        .font(.body)
+                    TextEditor(text: $notes).frame(minHeight: 60).font(.body)
                 }
-                
-                // Error display
                 if let error = errorMessage {
                     Section {
                         HStack {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundColor(.red)
-                            Text(error)
-                                .foregroundColor(.red)
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
+                            Text(error).foregroundColor(.red)
                         }
                     }
                 }
@@ -610,46 +358,17 @@ struct AddCredentialView: View {
             .formStyle(.grouped)
             .navigationTitle("Add API Credential")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-                
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        saveCredential()
-                    }
+                    Button("Save") { saveCredential() }
                     .disabled(title.isEmpty || credential.isEmpty || selectedVault.isEmpty || isSaving)
                 }
             }
             .onAppear {
-                // Pre-fill with clipboard if it looks like an API key
-                if clipboardManager.isAPIKey, let text = clipboardManager.currentText {
-                    credential = text
-                }
-                // Select first vault by default
-                if selectedVault.isEmpty, let firstVault = onePassword.availableVaults.first {
-                    selectedVault = firstVault.name
-                }
+                if clipboardManager.isAPIKey, let text = clipboardManager.currentText { credential = text }
+                if selectedVault.isEmpty, let firstVault = onePassword.availableVaults.first { selectedVault = firstVault.name }
             }
-            .overlay {
-                if isSaving {
-                    Color.black.opacity(0.3)
-                        .ignoresSafeArea()
-                    ProgressView("Saving...")
-                        .padding()
-                        .background(.regularMaterial)
-                        .cornerRadius(10)
-                }
-            }
-            .alert("Credential Saved!", isPresented: $showingSuccess) {
-                Button("Done") {
-                    dismiss()
-                }
-            } message: {
-                Text("Your API credential has been saved to 1Password.")
-            }
+            .alert("Credential Saved!", isPresented: $showingSuccess) { Button("Done") { dismiss() } }
         }
         .frame(minWidth: 400, minHeight: 500)
     }
@@ -657,45 +376,23 @@ struct AddCredentialView: View {
     private func saveCredential() {
         isSaving = true
         errorMessage = nil
-        
         Task {
             do {
-                let tagArray = tags
-                    .split(separator: ",")
-                    .map { $0.trimmingCharacters(in: .whitespaces) }
-                    .filter { !$0.isEmpty }
-                
-                let newCredential = OnePasswordCLI.NewAPICredential(
-                    title: title,
-                    vault: selectedVault,
-                    credential: credential,
-                    username: username.isEmpty ? nil : username,
-                    type: credentialType.isEmpty ? nil : credentialType,
-                    hostname: hostname.isEmpty ? nil : hostname,
-                    notes: notes.isEmpty ? nil : notes,
-                    tags: tagArray
-                )
-                
+                let tagArray = tags.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                let newCredential = OnePasswordCLI.NewAPICredential(title: title, vault: selectedVault, credential: credential, username: username.isEmpty ? nil : username, type: credentialType.isEmpty ? nil : credentialType, hostname: hostname.isEmpty ? nil : hostname, notes: notes.isEmpty ? nil : notes, tags: tagArray)
                 try await onePassword.createAPICredential(newCredential)
-                
-                await MainActor.run {
-                    isSaving = false
-                    showingSuccess = true
-                }
+                await MainActor.run { isSaving = false; showingSuccess = true }
             } catch {
-                await MainActor.run {
-                    isSaving = false
-                    errorMessage = error.localizedDescription
-                }
+                await MainActor.run { isSaving = false; errorMessage = error.localizedDescription }
             }
         }
     }
 }
 
-// MARK: - POPUP WINDOW MANAGER & VIEWS (MERGED)
+// MARK: - NEW POPUP SYSTEM (TWO WINDOWS)
 
-struct OnePasswordPopupView: View {
-    // Callbacks to control the window
+// 1. The Small Proposal Window
+struct ProposalView: View {
     var onClose: () -> Void
     var onExpand: (NSSize) -> Void // Tells the window to resize
     
@@ -786,22 +483,18 @@ struct OnePasswordPopupView: View {
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            
-            // --- HEADER ---
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
             HStack {
-                Image(systemName: "lock.fill") // Placeholder for 1Password Logo
+                Image(systemName: "lock.fill")
                     .foregroundColor(.white)
                     .padding(6)
                     .background(Circle().fill(Color.blue))
                     .font(.caption)
-                
                 Text("Save in 1Password?")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white)
-                
                 Spacer()
-                
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 12, weight: .medium))
@@ -809,10 +502,17 @@ struct OnePasswordPopupView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .padding([.top, .horizontal], 16)
+            .padding(16)
+            
+            // Content
+            Text("GitHub Personal Access Token")
+                .font(.system(size: 15))
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 20)
             
             if !isExpanded {
-                // --- COLLAPSED STATE (Screenshot Match) ---
+                // --- COLLAPSED STATE ---
                 VStack(alignment: .leading, spacing: 20) {
                     Text(itemName)
                         .font(.system(size: 15))
@@ -838,7 +538,6 @@ struct OnePasswordPopupView: View {
                 }
                 .padding(16)
                 .transition(.opacity)
-                
             } else {
                 // --- EXPANDED STATE (Form) ---
                 VStack(alignment: .leading, spacing: 15) {
@@ -929,13 +628,11 @@ struct OnePasswordPopupView: View {
                 .padding(16)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
-        .frame(width: isExpanded ? expandedSize.width : collapsedSize.width,
-               height: isExpanded ? expandedSize.height : collapsedSize.height,
-               alignment: .top)
-        .background(Color(red: 0.15, green: 0.15, blue: 0.16)) // Dark grey background
+        .background(Color(red: 0.15, green: 0.15, blue: 0.16))
         .cornerRadius(12)
-        // Add a thin border to match macOS dark windows
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.white.opacity(0.1), lineWidth: 1)
@@ -949,18 +646,82 @@ struct OnePasswordPopupView: View {
     }
 }
 
-// --- STYLING HELPERS ---
+// 2. The Detailed Form Window
+struct SaveDetailsView: View {
+    var onClose: () -> Void
+    
+    @State private var itemName: String = "GitHub Personal Access Token"
+    @State private var token: String = "ghp_..."
+    @State private var tags: String = ""
+    @State private var website: String = "github.com"
+    @State private var selectedVault: String = ""
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "lock.fill")
+                    .foregroundColor(.white)
+                    .padding(6)
+                    .background(Circle().fill(Color.blue))
+                    .font(.caption)
+                Text("Save Item")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.gray)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(16)
+            
+            // Form Fields
+            VStack(alignment: .leading, spacing: 15) {
+                DarkTextField(label: "Name", text: $itemName)
+                DarkTextField(label: "Token", text: $token)
+                DarkTextField(label: "Tags", text: $tags, placeholder: "Add tags...")
+                DarkTextField(label: "Vault", text: $selectedVault, placeholder: "Select vault")
+                DarkTextField(label: "Website", text: $website)
+            }
+            .padding(.horizontal, 16)
+            
+            Spacer()
+            
+            // Footer
+            HStack {
+                Spacer()
+                Button("Cancel") { onClose() }
+                .buttonStyle(DarkButtonStyle())
+                
+                Button("Save") {
+                    print("Saved!")
+                    onClose()
+                }
+                .buttonStyle(BlueButtonStyle())
+            }
+            .padding(16)
+        }
+        .background(Color(red: 0.15, green: 0.15, blue: 0.16))
+        .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
+    }
+}
+
+// --- SHARED STYLES ---
 
 struct DarkTextField: View {
     var label: String
     @Binding var text: String
     var placeholder: String = ""
-    
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.caption)
-                .foregroundColor(.gray)
+            Text(label).font(.caption).foregroundColor(.gray)
             TextField(placeholder, text: $text)
                 .textFieldStyle(.plain)
                 .padding(8)
@@ -1221,63 +982,29 @@ struct DarkButtonStyle: ButtonStyle {
             .background(Color.white.opacity(0.1))
             .foregroundColor(.white)
             .cornerRadius(8)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
-            )
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2), lineWidth: 1))
             .opacity(configuration.isPressed ? 0.8 : 1.0)
     }
 }
 
-// --- WINDOW MANAGER CLASS ---
-
-// --- WINDOW MANAGER CLASS ---
+// --- WINDOW MANAGER ---
 
 class OnePasswordWindowManager {
     static let shared = OnePasswordWindowManager()
-    private var popupPanel: NSPanel?
+    private var activePanel: NSPanel?
     
     func showPopup(clipboardManager: ClipboardManager, onePassword: OnePasswordCLI) {
-        if popupPanel != nil {
-            popupPanel?.makeKeyAndOrderFront(nil)
+        if activePanel != nil {
+            activePanel?.makeKeyAndOrderFront(nil)
             return
         }
         
         let initialSize = NSSize(width: 340, height: 160)
-        
-        let panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: initialSize),
-            styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView], // Borderless look
-            backing: .buffered,
-            defer: false
-        )
-        
-        // Window Configuration for "Popup" look
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        
-        // --- FIX STARTS HERE ---
-        // 1. Remove the floating line (separator)
-        panel.titlebarSeparatorStyle = .none 
-        
-        // 2. Ensure the window system knows it's transparent (prevents artifacts)
-        panel.isOpaque = false 
-        panel.backgroundColor = .clear
-        
-        // 3. Hide the title bar and traffic light buttons (ghost buttons)
-        panel.titlebarAppearsTransparent = true
-        panel.titleVisibility = .hidden
-        panel.standardWindowButton(.closeButton)?.isHidden = true
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
-        // --- FIX ENDS HERE ---
-        
-        panel.isMovableByWindowBackground = true
-        panel.isReleasedWhenClosed = false
+        let panel = createPanel(width: initialSize.width, height: initialSize.height)
         panel.hasShadow = true
         
         // Inject View with Actions and Dependencies
-        let contentView = OnePasswordPopupView(
+        let contentView = ProposalView(
             onClose: { [weak self] in
                 self?.closeWindow()
             },
@@ -1296,15 +1023,44 @@ class OnePasswordWindowManager {
         
         panel.contentView = NSHostingView(rootView: contentView)
         panel.center()
+        present(panel)
+    }
+    
+    // Shared Helper to create the transparent, borderless window
+    private func createPanel(width: CGFloat, height: CGFloat) -> NSPanel {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+            styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         
-        self.popupPanel = panel
+        // Remove native UI elements
+        panel.titlebarSeparatorStyle = .none
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.titlebarAppearsTransparent = true
+        panel.titleVisibility = .hidden
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+        
+        panel.isMovableByWindowBackground = true
+        panel.isReleasedWhenClosed = false
+        return panel
+    }
+    
+    private func present(_ panel: NSPanel) {
+        self.activePanel = panel
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
     
     func closeWindow() {
-        popupPanel?.close()
-        popupPanel = nil
+        activePanel?.close()
+        activePanel = nil
     }
 }
 

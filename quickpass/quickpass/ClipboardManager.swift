@@ -94,7 +94,7 @@ final class ClipboardManager: ObservableObject {
             print("API Key Detected! Triggering Popup...")
             DispatchQueue.main.async {
                 // Calls the Window Manager shared instance (defined in ContentView.swift)
-                OnePasswordWindowManager.shared.showPopup()
+                OnePasswordWindowManager.shared.showProposal()
             }
         }
     }
