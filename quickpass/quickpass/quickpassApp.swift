@@ -30,3 +30,4 @@ struct quickpassApp: App {
         .menuBarExtraStyle(.window)
     }
 }
+
