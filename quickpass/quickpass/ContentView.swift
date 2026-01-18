@@ -9,6 +9,8 @@ import SwiftUI
 import SwiftData
 import AppKit
 
+// MARK: - MAIN CONTENT VIEW
+
 struct ContentView: View {
     @EnvironmentObject var clipboardManager: ClipboardManager
     // EDITED: Use EnvironmentObject to share the session and fix double-login
@@ -41,6 +43,23 @@ struct ContentView: View {
                         
                         // 1Password section
                         onePasswordSection
+                        
+                        Divider()
+                        
+                        // --- POPUP TRIGGER BUTTON ---
+                        Button(action: {
+                            // Now guaranteed to be in scope because it's defined below
+                            OnePasswordWindowManager.shared.showPopup()
+                        }) {
+                            HStack {
+                                Image(systemName: "lock.square.stack.fill")
+                                Text("Trigger 1Password Popup")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.indigo)
                     }
                     .padding()
                 }
@@ -93,7 +112,7 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - Quick Save Popover
+    // MARK: - Quick Save Popover (Internal)
     
     private var quickSavePopover: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -486,7 +505,7 @@ struct ContentView: View {
         }
 }
 
-// MARK: - Vault Badge
+// MARK: - HELPER VIEWS
 
 struct VaultBadge: View {
     let name: String
@@ -505,8 +524,6 @@ struct VaultBadge: View {
         .cornerRadius(6)
     }
 }
-
-// MARK: - Add Credential View
 
 struct AddCredentialView: View {
     @ObservedObject var onePassword: OnePasswordCLI
@@ -673,6 +690,237 @@ struct AddCredentialView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - POPUP WINDOW MANAGER & VIEWS (MERGED)
+
+struct OnePasswordPopupView: View {
+    // Callbacks to control the window
+    var onClose: () -> Void
+    var onExpand: (NSSize) -> Void // Tells the window to resize
+    
+    // State for the transition
+    @State private var isExpanded = false
+    
+    // Form Fields
+    @State private var itemName: String = "GitHub Personal Access Token"
+    @State private var token: String = "ghp_5G9..." // Placeholder for clipboard content
+    @State private var tags: String = ""
+    @State private var website: String = "github.com"
+    @State private var selectedVault: String = "" // Placeholder variable
+    
+    // Constants for Window Sizes
+    let collapsedSize = NSSize(width: 340, height: 160)
+    let expandedSize = NSSize(width: 340, height: 450)
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            
+            // --- HEADER ---
+            HStack {
+                Image(systemName: "lock.fill") // Placeholder for 1Password Logo
+                    .foregroundColor(.white)
+                    .padding(6)
+                    .background(Circle().fill(Color.blue))
+                    .font(.caption)
+                
+                Text("Save in 1Password?")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.gray)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding([.top, .horizontal], 16)
+            
+            if !isExpanded {
+                // --- COLLAPSED STATE (Screenshot Match) ---
+                VStack(alignment: .leading, spacing: 20) {
+                    Text(itemName)
+                        .font(.system(size: 15))
+                        .foregroundColor(.white)
+                        .padding(.top, 10)
+                        .padding(.leading, 4)
+                    
+                    HStack(spacing: 12) {
+                        Button("Dismiss") {
+                            onClose()
+                        }
+                        .buttonStyle(DarkButtonStyle())
+                        
+                        Button("Save item") {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                isExpanded = true
+                            }
+                            // Trigger window resize
+                            onExpand(expandedSize)
+                        }
+                        .buttonStyle(BlueButtonStyle())
+                    }
+                }
+                .padding(16)
+                .transition(.opacity)
+                
+            } else {
+                // --- EXPANDED STATE (Form) ---
+                VStack(alignment: .leading, spacing: 15) {
+                    
+                    // Fields
+                    DarkTextField(label: "Name", text: $itemName)
+                    DarkTextField(label: "Token", text: $token)
+                    DarkTextField(label: "Tags", text: $tags, placeholder: "Add tags...")
+                    DarkTextField(label: "Vault", text: $selectedVault, placeholder: "Select vault (Placeholder)")
+                    DarkTextField(label: "Website", text: $website)
+                    
+                    Spacer()
+                    
+                    // Footer Actions
+                    HStack {
+                        Spacer()
+                        Button("Cancel") {
+                            onClose()
+                        }
+                        .buttonStyle(DarkButtonStyle())
+                        
+                        Button("Save") {
+                            print("Saving to vault: \(selectedVault)")
+                            onClose()
+                        }
+                        .buttonStyle(BlueButtonStyle())
+                    }
+                }
+                .padding(16)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .frame(width: isExpanded ? expandedSize.width : collapsedSize.width,
+               height: isExpanded ? expandedSize.height : collapsedSize.height,
+               alignment: .top)
+        .background(Color(red: 0.15, green: 0.15, blue: 0.16)) // Dark grey background
+        .cornerRadius(12)
+        // Add a thin border to match macOS dark windows
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
+    }
+}
+
+// --- STYLING HELPERS ---
+
+struct DarkTextField: View {
+    var label: String
+    @Binding var text: String
+    var placeholder: String = ""
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.gray)
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .padding(8)
+                .background(Color.black.opacity(0.3))
+                .cornerRadius(6)
+                .foregroundColor(.white)
+        }
+    }
+}
+
+struct BlueButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(Color.blue)
+            .foregroundColor(.white)
+            .cornerRadius(8)
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
+    }
+}
+
+struct DarkButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(Color.white.opacity(0.1))
+            .foregroundColor(.white)
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+            )
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
+    }
+}
+
+// --- WINDOW MANAGER CLASS ---
+
+class OnePasswordWindowManager {
+    static let shared = OnePasswordWindowManager()
+    private var popupPanel: NSPanel?
+    
+    func showPopup() {
+        if popupPanel != nil {
+            popupPanel?.makeKeyAndOrderFront(nil)
+            return
+        }
+        
+        let initialSize = NSSize(width: 340, height: 160)
+        
+        let panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: initialSize),
+            styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView], // Borderless look
+            backing: .buffered,
+            defer: false
+        )
+        
+        // Window Configuration for "Popup" look
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.titlebarAppearsTransparent = true
+        panel.titleVisibility = .hidden
+        panel.isMovableByWindowBackground = true
+        panel.backgroundColor = .clear // Let SwiftUI handle background
+        panel.isReleasedWhenClosed = false
+        panel.hasShadow = true
+        
+        // Inject View with Actions
+        let contentView = OnePasswordPopupView(
+            onClose: { [weak self] in
+                self?.closeWindow()
+            },
+            onExpand: { [weak panel] newSize in
+                // Animate the window frame change
+                guard let panel = panel else { return }
+                var frame = panel.frame
+                let diff = newSize.height - frame.height
+                frame.origin.y -= diff // Grow downwards (move origin down)
+                frame.size = newSize
+                panel.animator().setFrame(frame, display: true)
+            }
+        )
+        
+        panel.contentView = NSHostingView(rootView: contentView)
+        panel.center()
+        
+        self.popupPanel = panel
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+    
+    func closeWindow() {
+        popupPanel?.close()
+        popupPanel = nil
     }
 }
 
