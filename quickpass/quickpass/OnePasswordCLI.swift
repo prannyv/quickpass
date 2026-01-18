@@ -433,16 +433,17 @@ final class OnePasswordCLI: ObservableObject {
     /// - Returns: The created item
     @discardableResult
     func createAPICredential(_ credential: NewAPICredential) async throws -> Item {
+        // OnePasswordCLI.swift - Inside createAPICredential
         var arguments = [
             "item", "create",
-            "--category", "API Credential",
+            "--category", "Login", // Changed from "API Credential"
             "--title", credential.title,
             "--vault", credential.vault,
             "--format", "json"
         ]
-        
-        // Add the main credential field
-        arguments.append("credential=\(credential.credential)")
+
+        // For 'Login', use 'password=' to store the API key securely
+        arguments.append("password=\(credential.credential)")
         
         // Add optional built-in fields
         if let username = credential.username, !username.isEmpty {
@@ -622,6 +623,11 @@ final class OnePasswordCLI: ObservableObject {
                         stdout: stdout,
                         stderr: stderr
                     )
+                    
+                    // --- INSERT DEBUG LINE HERE ---
+                    if process.terminationStatus != 0 {
+                        print("1Password CLI Error: \(stderr)")
+                    }
                     
                     // Check for common errors
                     if process.terminationStatus != 0 {

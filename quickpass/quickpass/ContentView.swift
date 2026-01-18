@@ -539,11 +539,19 @@ struct ProposalView: View {
                 }
                 .buttonStyle(DarkButtonStyle())
                 
+                // ContentView.swift - Inside struct ProposalView
+
                 Button("Save item") {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        isExpanded = true
-                    }
+                    // 1. Tell the window to expand first
                     onExpand(expandedSize)
+                    
+                    // 2. Wait for the window expansion to be well underway before
+                    // switching the internal SwiftUI view to the expanded form.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        // Remove 'withAnimation' here to prevent SwiftUI from
+                        // triggering a second, conflicting layout pass.
+                        self.isExpanded = true
+                    }
                 }
                 .buttonStyle(BlueButtonStyle())
             }
@@ -587,6 +595,9 @@ struct ProposalView: View {
             }
         }
         .padding(16)
+        // ADD THIS: Force the view to be exactly the expanded size
+        // so the window doesn't have to calculate constraints
+        .frame(width: expandedSize.width, height: expandedSize.height, alignment: .top)
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
     
@@ -988,13 +999,23 @@ class OnePasswordWindowManager {
                 self?.closeWindow()
             },
             onExpand: { [weak panel] newSize in
-                // Animate the window frame change
                 guard let panel = panel else { return }
+                
                 var frame = panel.frame
                 let diff = newSize.height - frame.height
-                frame.origin.y -= diff // Grow downwards (move origin down)
+                frame.origin.y -= diff // Keep the top of the window in place while it grows down
                 frame.size = newSize
-                panel.animator().setFrame(frame, display: true)
+                
+                // Use a standard Animation Context which is more stable for NSHostingView
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.25
+                    context.allowsImplicitAnimation = true
+                    // Set the frame directly; allowsImplicitAnimation handles the smooth transition
+                    panel.setFrame(frame, display: true, animate: true)
+                }, completionHandler: {
+                    // Ensure the layout engine is forced to sync after the animation finishes
+                    panel.contentView?.needsLayout = true
+                })
             },
             clipboardManager: clipboardManager,
             onePassword: onePassword
