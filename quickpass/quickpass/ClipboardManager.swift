@@ -122,105 +122,275 @@ final class ClipboardManager: ObservableObject {
 }
 
 
-// bryant model/algo CALL "v2CheckIsAPIKey"
+// bryant model/algo CALL "v2CheckIsAPIKey" - IMPROVED VERSION
 import Foundation
 
 // MARK: - Public API
 
 /// Fast, heuristic "API key likeness" check.
-/// Designed for ~instant evaluation on 1–50 char strings.
+/// Designed for ~instant evaluation on 10–128 char strings.
 ///
 /// - Returns: true if the token looks like an API key / secret / token.
 public func v2CheckIsAPIKey(_ raw: String) -> Bool {
     let s = v2SafeStrip(raw)
     let n = s.count
-    if n == 0 { return false }
-    if n > 256 { return true } // very long opaque tokens are almost always secrets
-
-    // 1) Hard signals: known prefixes and strong shapes
-    if v2HasKnownPrefix(s) {
-        // Most vendor keys are long-ish; still allow short AWS access key id.
-        if n >= 16 { return true }
-    }
-
-    if v2LooksLikeJWT(s) { return true }
-    if v2LooksLikeHex(s) { return true }
-    if v2LooksLikeBase64(s) { return true }
-
-    // 2) Soft scoring (cheap)
-    // For short strings, be conservative.
+    
+    // Basic bounds
     if n < 10 { return false }
+    if n > 256 { return false } // Changed: very long is likely text, not secret
+    
+    // Stage 0: Quick rejects (fast path to avoid false positives)
+    if v2QuickReject(s, length: n) {
+        return false
+    }
+    
+    // Stage 1: Hard signals - known prefixes and strong shapes
+    if let hardResult = v2CheckHardSignals(s, length: n) {
+        return hardResult
+    }
+    
+    // Stage 2: Soft scoring with improved penalties
+    return v2SoftScore(s, length: n)
+}
 
+// MARK: - Stage 0: Quick Rejects (NEW)
+
+private func v2QuickReject(_ s: String, length n: Int) -> Bool {
+    let lower = s.lowercased()
+    
+    // Known false positive patterns
+    let falsePositives = [
+        "example", "test", "sample", "placeholder", "your_key_here",
+        "password", "secret", "token", "apikey", "api_key",
+        "lorem", "ipsum", "dummy", "mock", "fake",
+        "xxxxxxxxxx", "123456789", "undefined", "null"
+    ]
+    
+    for pattern in falsePositives {
+        if lower.contains(pattern) { return true }
+    }
+    
+    // Has spaces (very unlikely for real secrets)
+    if s.contains(" ") && n > 15 {
+        return true
+    }
+    
+    // Excessive character repetition (e.g., "aaaaaaaaa")
+    if v2HasExcessiveRepetition(s) {
+        return true
+    }
+    
+    // URL/domain pattern
+    if v2LooksLikeURL(lower) {
+        return true
+    }
+    
+    // Email pattern
+    if lower.contains("@") && lower.contains(".") {
+        return true
+    }
+    
+    // Path-like pattern (multiple slashes)
+    if s.filter({ $0 == "/" }).count >= 2 {
+        return true
+    }
+    
+    return false
+}
+
+// MARK: - Stage 1: Hard Signals (IMPROVED)
+
+private func v2CheckHardSignals(_ s: String, length n: Int) -> Bool? {
+    // Known vendor prefixes with stricter length requirements
+    if v2HasKnownPrefix(s) {
+        // Most vendor keys have minimum lengths
+        let minLengths: [String: Int] = [
+            "AKIA": 20,         // AWS access key
+            "ASIA": 20,         // AWS temp
+            "sk_live_": 32,     // Stripe live
+            "sk_test_": 32,     // Stripe test
+            "pk_live_": 32,     // Stripe public live
+            "pk_test_": 32,     // Stripe public test
+            "xoxb-": 50,        // Slack bot
+            "xoxp-": 50,        // Slack user
+            "ghp_": 40,         // GitHub PAT
+            "gho_": 40,         // GitHub OAuth
+            "ghu_": 40,         // GitHub user
+            "ghs_": 40,         // GitHub server
+            "github_pat_": 82,  // GitHub fine-grained PAT
+            "AIza": 39,         // Google API (usually 39)
+        ]
+        
+        for (prefix, minLen) in minLengths {
+            if s.hasPrefix(prefix) && n >= minLen {
+                return true
+            }
+        }
+        
+        // Generic known prefix match (fallback)
+        if n >= 16 {
+            return true
+        }
+    }
+    
+    // JWT - more strict
+    if v2LooksLikeJWT(s) && n >= 100 { // JWTs are typically 100+ chars
+        return true
+    }
+    
+    // Hex - tighter range
+    if v2LooksLikeHex(s) && n >= 32 && n <= 128 {
+        return true
+    }
+    
+    // Base64 - with additional validation
+    if v2LooksLikeBase64(s) && n >= 32 && n % 4 == 0 {
+        // Must have mix of chars (not just letters)
+        let hasDigits = s.contains(where: { $0.isNumber })
+        let hasSymbols = s.contains("+") || s.contains("/") || s.contains("=")
+        if hasDigits || hasSymbols {
+            return true
+        }
+    }
+    
+    // Known secret/credential domain patterns (these ARE credentials)
+    let secretDomains = [
+        ".apps.googleusercontent.com",  // Google OAuth Client IDs
+        ".firebaseapp.com",             // Firebase
+        ".amazoncognito.com",           // AWS Cognito
+        ".onmicrosoft.com",             // Microsoft/Azure
+        ".azurewebsites.net",           // Azure
+        ".cloudapp.azure.com",          // Azure
+        ".supabase.co",                 // Supabase
+        ".vercel.app",                  // Vercel
+        ".netlify.app",                 // Netlify
+        ".herokuapp.com",               // Heroku
+        ".awsapps.com",                 // AWS
+        ".okta.com",                    // Okta
+        ".auth0.com"                    // Auth0
+    ]
+    
+    let lower = s.lowercased()
+    for domain in secretDomains {
+        if lower.hasSuffix(domain) || lower.contains(domain) {
+            // These domain patterns indicate credentials/secrets
+            return true
+        }
+    }
+    
+    return nil // Continue to soft scoring
+}
+
+// MARK: - Stage 2: Soft Scoring (IMPROVED)
+
+private func v2SoftScore(_ s: String, length n: Int) -> Bool {
     let stats = v2CharStats(s)
     let digitRatio  = Double(stats.digits) / Double(n)
     let symbolRatio = Double(stats.symbols) / Double(n)
     let upperRatio  = Double(stats.upper)  / Double(n)
     let lowerRatio  = Double(stats.lower)  / Double(n)
-
+    
     let variety = v2CharVarietyScore(hasLower: stats.lower > 0,
-                                    hasUpper: stats.upper > 0,
-                                    hasDigit: stats.digits > 0,
-                                    hasSymbol: stats.symbols > 0)
-
-    let entropy = v2ShannonEntropy(s) // bits/char, max ~log2(unique chars)
+                                     hasUpper: stats.upper > 0,
+                                     hasDigit: stats.digits > 0,
+                                     hasSymbol: stats.symbols > 0)
+    
+    let entropy = v2ShannonEntropy(s)
     let hasEquals = s.contains("=")
-
-    // Weighted “key-likeness” score (tuneable).
-    // Intent: catch opaque tokens; avoid normal words/filenames/ids.
+    
     var score = 0.0
-
-    // Length helps a lot
-    if n >= 20 { score += 1.2 }
-    if n >= 28 { score += 1.0 }
-    if n >= 36 { score += 0.8 }
-
-    // Character mix
+    
+    // Length bonuses (adjusted)
+    if n >= 40 { score += 1.5 }
+    else if n >= 32 { score += 1.2 }
+    else if n >= 24 { score += 0.8 }
+    else if n >= 16 { score += 0.3 }
+    
+    // Character variety
     if variety >= 0.75 { score += 1.0 }
     else if variety >= 0.50 { score += 0.5 }
-
-    // Entropy is a strong signal for "random-looking"
-    if entropy >= 4.0 { score += 1.2 }          // quite random
-    else if entropy >= 3.5 { score += 0.8 }
-    else if entropy >= 3.0 { score += 0.4 }
-
-    // Typical token shapes: some digits + some symbols or mixed case
-    if digitRatio >= 0.15 { score += 0.3 }
-    if symbolRatio >= 0.05 { score += 0.4 }
-    if upperRatio >= 0.20 && lowerRatio >= 0.20 { score += 0.4 } // mixed case
-
-    // Base64 padding hint (weak alone)
+    
+    // Entropy is critical (increased weight)
+    if entropy >= 4.5 { score += 2.0 }       // Very high randomness
+    else if entropy >= 4.0 { score += 1.5 }
+    else if entropy >= 3.5 { score += 1.0 }
+    else if entropy >= 3.0 { score += 0.5 }
+    else { score -= 0.5 }                    // Low entropy penalty
+    
+    // Character distribution bonuses
+    if digitRatio >= 0.15 && digitRatio <= 0.6 { score += 0.4 }
+    if symbolRatio >= 0.05 && symbolRatio <= 0.3 { score += 0.5 }
+    if upperRatio >= 0.2 && lowerRatio >= 0.2 { score += 0.4 } // Mixed case
+    
+    // Base64 padding hint
     if hasEquals && n >= 24 { score += 0.3 }
-
-    // Penalties for “normal-looking”
-    if symbolRatio == 0 && lowerRatio > 0.8 && digitRatio < 0.2 {
-        // looks like a normal lowercase word or ID
-        score -= 1.0
+    
+    // STRONGER PENALTIES
+    
+    // Too much lowercase, few digits (normal text)
+    if lowerRatio > 0.7 && digitRatio < 0.1 && symbolRatio < 0.05 {
+        score -= 2.0  // Increased from -1.0
     }
-    if s.contains(".") && !s.contains("-") && !s.contains("_") && n < 24 {
-        // "filename.ext" vibe
-        score -= 0.5
+    
+    // Filename pattern (extension-like)
+    if v2LooksLikeFilename(s) {
+        score -= 1.5  // Increased from -0.5
     }
-
-    // Decision threshold:
-    // - For 10–19 chars, require stronger evidence
-    // - For 20+ chars, standard threshold
-    let threshold = (n < 20) ? 2.7 : 2.2
+    
+    // All same case (less common in secrets)
+    if upperRatio == 1.0 || lowerRatio == 1.0 {
+        score -= 0.8
+    }
+    
+    // No symbols or digits (very suspicious)
+    if symbolRatio == 0 && digitRatio == 0 {
+        score -= 1.5
+    }
+    
+    // Contains common word patterns
+    if v2ContainsCommonPattern(s.lowercased()) {
+        score -= 2.0  // NEW: Strong penalty
+    }
+    
+    // Dynamic threshold based on length
+    let threshold: Double
+    if n >= 32 {
+        threshold = 2.0      // Longer strings, lower threshold
+    } else if n >= 20 {
+        threshold = 2.5
+    } else {
+        threshold = 3.0      // Shorter strings, higher threshold
+    }
+    
     return score >= threshold
 }
 
-// MARK: - Known prefixes
+// MARK: - Known prefixes (EXPANDED)
 
 private let v2KeywordPrefixes: [String] = [
     "AKIA",         // AWS access key id
     "ASIA",         // AWS temp
-    "sk-",          // OpenAI/Stripe-ish
-    "rk_",          // some vendors
-    "pk_",          // Stripe public
+    "sk_live_",     // Stripe live secret
+    "sk_test_",     // Stripe test secret
+    "pk_live_",     // Stripe live public
+    "pk_test_",     // Stripe test public
+    "rk_live_",     // Stripe restricted live
+    "rk_test_",     // Stripe restricted test
     "xoxb-",        // Slack bot
     "xoxp-",        // Slack user
-    "ghp_",         // GitHub
-    "github_pat_",  // GitHub PAT
+    "xoxa-",        // Slack app-level
+    "xoxr-",        // Slack refresh
+    "ghp_",         // GitHub personal access token
+    "gho_",         // GitHub OAuth token
+    "ghu_",         // GitHub user-to-server token
+    "ghs_",         // GitHub server-to-server token
+    "ghr_",         // GitHub refresh token
+    "github_pat_",  // GitHub fine-grained PAT
     "AIza",         // Google API key
+    "ya29.",        // Google OAuth 2.0 access token
+    "glpat-",       // GitLab personal access token
+    "gloas-",       // GitLab OAuth application secret
+    "glsa-",        // GitLab system access token
 ]
 
 private func v2HasKnownPrefix(_ s: String) -> Bool {
@@ -233,12 +403,15 @@ private func v2HasKnownPrefix(_ s: String) -> Bool {
 // MARK: - String cleanup
 
 private func v2SafeStrip(_ s: String) -> String {
-    // trim whitespace/newlines and a single layer of quotes
     var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
-    if t.hasPrefix("\"") { t.removeFirst() }
-    if t.hasSuffix("\"") { t.removeLast() }
-    if t.hasPrefix("'")  { t.removeFirst() }
-    if t.hasSuffix("'")  { t.removeLast() }
+    
+    // Remove surrounding quotes (one layer)
+    if t.hasPrefix("\"") && t.hasSuffix("\"") && t.count > 2 {
+        t = String(t.dropFirst().dropLast())
+    } else if t.hasPrefix("'") && t.hasSuffix("'") && t.count > 2 {
+        t = String(t.dropFirst().dropLast())
+    }
+    
     return t.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
@@ -248,18 +421,20 @@ private func v2SafeStrip(_ s: String) -> String {
 private func v2LooksLikeJWT(_ s: String) -> Bool {
     let parts = s.split(separator: ".", omittingEmptySubsequences: false)
     guard parts.count == 3 else { return false }
-
+    
     for seg in parts {
         if seg.count < 8 { return false }
         for ch in seg.unicodeScalars {
             // base64url: A-Z a-z 0-9 - _
-            if !(v2IsAlphaNum(ch) || ch == "-" || ch == "_") { return false }
+            if !(v2IsAlphaNum(ch) || ch == "-" || ch == "_") {
+                return false
+            }
         }
     }
     return true
 }
 
-/// Hex secret-ish: >= 24 chars, all hex
+/// Hex secret: >= 24 chars, all hex
 private func v2LooksLikeHex(_ s: String) -> Bool {
     guard s.count >= 24 else { return false }
     for ch in s.unicodeScalars {
@@ -268,19 +443,108 @@ private func v2LooksLikeHex(_ s: String) -> Bool {
     return true
 }
 
-/// Base64-ish: >= 24 chars, only base64 chars, length multiple of 4
+/// Base64: >= 24 chars, only base64 chars, length multiple of 4
 private func v2LooksLikeBase64(_ s: String) -> Bool {
     let n = s.count
     guard n >= 24 else { return false }
     guard n % 4 == 0 else { return false }
-
+    
     for ch in s.unicodeScalars {
         if !v2IsBase64Char(ch) { return false }
     }
     return true
 }
 
-// MARK: - Numeric-ish features
+// MARK: - NEW Helper Functions
+
+private func v2HasExcessiveRepetition(_ s: String) -> Bool {
+    guard s.count >= 6 else { return false }
+    
+    var prevChar: Character?
+    var repeatCount = 1
+    var maxRepeat = 1
+    
+    for char in s {
+        if char == prevChar {
+            repeatCount += 1
+            maxRepeat = max(maxRepeat, repeatCount)
+        } else {
+            repeatCount = 1
+        }
+        prevChar = char
+    }
+    
+    // If any character repeats 4+ times consecutively, or
+    // if max repeat is >30% of string length
+    return maxRepeat >= 4 || (Double(maxRepeat) / Double(s.count) > 0.3)
+}
+
+private func v2LooksLikeURL(_ s: String) -> Bool {
+    // Don't flag Google OAuth Client IDs as URLs
+    if s.hasSuffix(".apps.googleusercontent.com") {
+        return false
+    }
+    
+    // Don't flag other known secret/API key domains
+    if s.hasSuffix(".firebaseapp.com") ||
+       s.contains(".amazoncognito.com") ||
+       s.hasSuffix(".onmicrosoft.com") ||
+       s.hasSuffix(".azurewebsites.net") ||
+       s.hasSuffix(".cloudapp.azure.com") ||
+       s.contains(".supabase.co") ||
+       s.contains(".vercel.app") ||
+       s.contains(".netlify.app") ||
+       s.contains(".herokuapp.com") ||
+       s.contains(".cloudflare.com") ||
+       s.contains(".awsapps.com") ||
+       s.contains(".okta.com") ||
+       s.contains(".auth0.com") {
+        return false
+    }
+    
+    // Now check for actual URLs
+    return s.hasPrefix("http://") ||
+           s.hasPrefix("https://") ||
+           s.hasPrefix("www.") ||
+           s.contains(".com/") ||  // Note the trailing slash
+           s.contains(".org/") ||
+           s.contains(".net/")
+}
+
+private func v2LooksLikeFilename(_ s: String) -> Bool {
+    // Check for file extension pattern
+    if let dotIndex = s.lastIndex(of: ".") {
+        let afterDot = s[s.index(after: dotIndex)...]
+        // Extension should be 2-5 chars
+        if afterDot.count >= 2 && afterDot.count <= 5 {
+            // And should only contain letters
+            return afterDot.allSatisfy { $0.isLetter }
+        }
+    }
+    return false
+}
+
+private func v2ContainsCommonPattern(_ s: String) -> Bool {
+    // Common words that appear in non-secret strings
+    let commonPatterns = [
+        "the", "and", "for", "are", "but", "not", "you", "all",
+        "can", "her", "was", "one", "our", "out", "get", "has",
+        "him", "his", "how", "man", "new", "now", "old", "see",
+        "way", "who", "boy", "did", "its", "let", "put", "say",
+        "she", "too", "use", "data", "user", "file", "name",
+        "path", "temp", "admin", "config", "debug"
+    ]
+    
+    for pattern in commonPatterns {
+        if s.contains(pattern) {
+            return true
+        }
+    }
+    
+    return false
+}
+
+// MARK: - Character stats
 
 private struct V2CharStats {
     var digits: Int = 0
@@ -289,7 +553,6 @@ private struct V2CharStats {
     var symbols: Int = 0
 }
 
-/// Single pass stats (O(n))
 private func v2CharStats(_ s: String) -> V2CharStats {
     var st = V2CharStats()
     for ch in s.unicodeScalars {
@@ -310,23 +573,21 @@ private func v2CharVarietyScore(hasLower: Bool, hasUpper: Bool, hasDigit: Bool, 
     return Double(count) / 4.0
 }
 
-/// Shannon entropy in bits/character (O(n))
+/// Shannon entropy in bits/character
 private func v2ShannonEntropy(_ s: String) -> Double {
     if s.isEmpty { return 0.0 }
     var counts: [UInt32: Int] = [:]
     counts.reserveCapacity(min(64, s.count))
-
+    
     var n = 0
     for ch in s.unicodeScalars {
-        let key = ch.value
-        counts[key, default: 0] += 1
+        counts[ch.value, default: 0] += 1
         n += 1
     }
-
+    
     let dn = Double(n)
     var ent = 0.0
-    ent.reserveCapacityIfAvailable() // no-op; keeps intent obvious
-
+    
     for (_, c) in counts {
         let p = Double(c) / dn
         ent -= p * log2(p)
@@ -334,30 +595,34 @@ private func v2ShannonEntropy(_ s: String) -> Double {
     return ent
 }
 
-// MARK: - Character classification (fast, ASCII-focused)
+// MARK: - Character classification
 
-private func v2IsDigit(_ ch: UnicodeScalar) -> Bool { ch.value >= 48 && ch.value <= 57 }          // 0-9
-private func v2IsUpper(_ ch: UnicodeScalar) -> Bool { ch.value >= 65 && ch.value <= 90 }          // A-Z
-private func v2IsLower(_ ch: UnicodeScalar) -> Bool { ch.value >= 97 && ch.value <= 122 }         // a-z
-private func v2IsAlphaNum(_ ch: UnicodeScalar) -> Bool { v2IsDigit(ch) || v2IsUpper(ch) || v2IsLower(ch) }
+private func v2IsDigit(_ ch: UnicodeScalar) -> Bool {
+    ch.value >= 48 && ch.value <= 57  // 0-9
+}
+
+private func v2IsUpper(_ ch: UnicodeScalar) -> Bool {
+    ch.value >= 65 && ch.value <= 90  // A-Z
+}
+
+private func v2IsLower(_ ch: UnicodeScalar) -> Bool {
+    ch.value >= 97 && ch.value <= 122  // a-z
+}
+
+private func v2IsAlphaNum(_ ch: UnicodeScalar) -> Bool {
+    v2IsDigit(ch) || v2IsUpper(ch) || v2IsLower(ch)
+}
 
 private func v2IsHex(_ ch: UnicodeScalar) -> Bool {
     switch ch.value {
-    case 48...57:  return true // 0-9
-    case 65...70:  return true // A-F
-    case 97...102: return true // a-f
+    case 48...57:  return true  // 0-9
+    case 65...70:  return true  // A-F
+    case 97...102: return true  // a-f
     default: return false
     }
 }
 
 private func v2IsBase64Char(_ ch: UnicodeScalar) -> Bool {
-    // base64: A-Z a-z 0-9 + / =
     if v2IsAlphaNum(ch) { return true }
     return ch == "+" || ch == "/" || ch == "="
-}
-
-// MARK: - Tiny helper to keep code clear (optional)
-
-private extension Double {
-    mutating func reserveCapacityIfAvailable() { /* intentionally empty */ }
 }
