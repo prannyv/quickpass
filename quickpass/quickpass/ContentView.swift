@@ -31,31 +31,47 @@ struct ContentView: View {
                 // Main content area
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
+                        // Greeting
+                        if let account = onePassword.currentAccount {
+                            Text("Hello \(account.name)")
+                                .font(.largeTitle)
+                                .fontWeight(.bold)
+                        }
+                        
                         // Clipboard monitoring section
                         clipboardSection
                         
+                        // Flavor text section
+                        flavorTextSection
+                        
                         // 1Password section
-                        onePasswordSection
+                        // onePasswordSection
                     }
                     .padding()
                 }
                 
-                // Sticky Footer for Clear action
-                if onePassword.isSignedIn {
-                    Divider()
-                    HStack {
-                        Spacer()
-                        Button("Clear Clipboard") {
-                            NSPasteboard.general.clearContents()
-                            clipboardManager.refresh()
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundColor(.secondary)
-                        .font(.caption)
-                    }
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-                }
+                Divider()
+                
+                // Bottom action buttons
+                HStack(spacing: 8) { // 1. Reduced spacing from 12 to 8
+    Button("Disconnect") {
+        onePassword.signOut()
+    }
+    .buttonStyle(.bordered)
+    .controlSize(.large) // 2. Increased size preset
+    .frame(maxWidth: .infinity)
+    .frame(height: 44)   // 3. Increased height from 32 to 44
+    
+    Button("Quit") {
+        NSApplication.shared.terminate(nil)
+    }
+    .buttonStyle(.borderedProminent)
+    .controlSize(.large) // 2. Increased size preset
+    .frame(maxWidth: .infinity)
+    .frame(height: 44)   // 3. Increased height from 32 to 44
+}
+.padding(.horizontal, 16)
+.padding(.vertical, 12)
             }
             .navigationTitle("QuickPass")
             .toolbar {
@@ -82,6 +98,13 @@ struct ContentView: View {
                         onePassword: onePasswordRef
                     )
                 }
+                
+                // Fetch user info if already signed in
+                if onePasswordRef.isSignedIn {
+                    Task {
+                        try? await onePasswordRef.getUserInfo()
+                    }
+                }
             }
             
             // Increment vulnerability counter when API key detected
@@ -107,9 +130,9 @@ struct ContentView: View {
         HStack {
             Circle()
                 .fill(onePassword.isSignedIn ? Color.green : Color.orange)
-                .frame(width: 8, height: 8)
+                .frame(width: 10, height: 10)
             Text(onePassword.isSignedIn ? "Connected to 1Password" : "Not connected")
-                .font(.caption)
+                .font(.caption.weight(.semibold))
                 .foregroundColor(.secondary)
             Spacer()
             if let account = onePassword.currentAccount {
@@ -129,24 +152,23 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Clipboard Monitor", systemImage: "doc.on.clipboard")
                     .font(.headline)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Current Content:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(clipboardManager.currentText ?? "Empty")
-                        .font(.system(.body, design: .monospaced))
-                        .lineLimit(3)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(Color(nsColor: .textBackgroundColor))
-                        .cornerRadius(6)
+                if clipboardManager.isAPIKey {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(clipboardManager.currentText ?? "Empty")
+                            .font(.system(.body, design: .monospaced))
+                            .lineLimit(3)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .cornerRadius(6)
+                    }
                 }
                 HStack {
                     HStack(spacing: 6) {
                         Image(systemName: clipboardManager.isAPIKey ? "checkmark.circle.fill" : "xmark.circle")
                             .foregroundColor(clipboardManager.isAPIKey ? .green : .secondary)
-                        Text(clipboardManager.isAPIKey ? "Looks like an API key" : "Not detected as API key")
+                        Text(clipboardManager.isAPIKey ? "Looks like an API key" : "API key not detected")
                             .font(.caption)
                             .foregroundColor(clipboardManager.isAPIKey ? .primary : .secondary)
                     }
@@ -155,6 +177,20 @@ struct ContentView: View {
             }
             .padding(4)
         }
+    }
+    
+    // MARK: - Flavor Text Section
+    private var flavorTextSection: some View {
+        HStack {
+            Spacer()
+            Text("🛡️ We have stopped \(vulnerabilitiesStopped) data leaks!")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.vertical, 8)
+        .background(Color.secondary.opacity(0.1))
+        .cornerRadius(8)
     }
     
     // MARK: - 1Password Section
@@ -243,16 +279,6 @@ struct ContentView: View {
                 }
             }
             Divider()
-            HStack {
-                Spacer()
-                Text("🛡️ We have stopped \(vulnerabilitiesStopped) vulnerabilities")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.vertical, 8)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(8)
             
             VStack(alignment: .leading, spacing: 8) {
                 if onePassword.availableVaults.isEmpty {
@@ -376,7 +402,11 @@ struct AddCredentialView: View {
                 let tagArray = tags.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
                 let newCredential = OnePasswordCLI.NewAPICredential(title: title, vault: selectedVault, credential: credential, username: username.isEmpty ? nil : username, type: credentialType.isEmpty ? nil : credentialType, hostname: hostname.isEmpty ? nil : hostname, notes: notes.isEmpty ? nil : notes, tags: tagArray)
                 try await onePassword.createAPICredential(newCredential)
-                await MainActor.run { isSaving = false; showingSuccess = true }
+                await MainActor.run {
+                    clipboardManager.clearClipboard()
+                    isSaving = false
+                    showingSuccess = true
+                }
             } catch {
                 await MainActor.run { isSaving = false; errorMessage = error.localizedDescription }
             }
@@ -468,8 +498,10 @@ struct ProposalView: View {
                     isSaving = false
                     showSuccess = true
                     
-                    // Auto-close after success
+                    // Auto-close after success and clear clipboard when window closes
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        // Clear clipboard when the card closes after successful save
+                        clipboardManager.clearClipboard()
                         onClose()
                     }
                 }

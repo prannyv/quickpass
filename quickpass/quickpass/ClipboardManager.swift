@@ -122,6 +122,17 @@ final class ClipboardManager: ObservableObject {
         updateClipboard()
     }
     
+    /// Clears the clipboard by setting it to an empty string
+    func clearClipboard() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString("", forType: .string)
+        // Update our state to reflect the empty clipboard
+        currentText = ""
+        isAPIKey = false
+        lastChangeCount = pasteboard.changeCount
+    }
+    
     // MARK: - API Key Detection
     
     func checkIsAPIKey(_ text: String?) -> Bool {

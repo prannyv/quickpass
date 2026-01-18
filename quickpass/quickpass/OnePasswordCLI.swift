@@ -306,18 +306,23 @@ final class OnePasswordCLI: ObservableObject {
                 availableVaults = vaults
                 isSignedIn = true
                 
-                // Try to get account info (may be empty with desktop integration)
-                if let accounts = try? await listAccounts(), let first = accounts.first {
-                    currentAccount = first
-                } else {
-                    // Create a placeholder account for desktop app integration
-                    currentAccount = Account(
-                        id: "desktop-integration",
-                        name: "1Password",
-                        email: "Connected via Desktop App",
-                        url: "1password.com",
-                        userUUID: nil
-                    )
+                // Try to get detailed account info using `op account get`
+                try? await getUserInfo()
+                
+                // Fallback: If getUserInfo didn't set account, try listAccounts
+                if currentAccount == nil {
+                    if let accounts = try? await listAccounts(), let first = accounts.first {
+                        currentAccount = first
+                    } else {
+                        // Create a placeholder account for desktop app integration
+                        currentAccount = Account(
+                            id: "desktop-integration",
+                            name: "Pranav",
+                            email: "Connected via Desktop App",
+                            url: "1password.com",
+                            userUUID: nil
+                        )
+                    }
                 }
             } else {
                 lastError = .notSignedIn
@@ -361,6 +366,54 @@ final class OnePasswordCLI: ObservableObject {
                 return []
             }
             throw OPError.parseError(error.localizedDescription)
+        }
+    }
+    
+    /// Gets the current account details using `op whoami`
+    private struct OnePasswordWhoami: Codable {
+        let email: String
+        
+        enum CodingKeys: String, CodingKey {
+            case email
+        }
+    }
+    
+    /// Fetches detailed account information using `op whoami`
+    func getUserInfo() async throws {
+        let process = Process()
+        let pipe = Pipe()
+        
+        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/op")
+        process.arguments = ["whoami", "--format=json"]
+        process.standardOutput = pipe
+        
+        try process.run()
+        process.waitUntilExit()
+        
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let whoami = try decoder.decode(OnePasswordWhoami.self, from: data)
+        
+        // Extract name from email (part before @)
+        let name = whoami.email.components(separatedBy: "@").first ?? whoami.email
+        
+        // Update currentAccount with the fetched details
+        if currentAccount != nil {
+            currentAccount = Account(
+                id: currentAccount!.id,
+                name: name,
+                email: whoami.email,
+                url: currentAccount!.url,
+                userUUID: currentAccount!.userUUID
+            )
+        } else {
+            // Create new account if one doesn't exist
+            currentAccount = Account(
+                id: "account-\(UUID().uuidString)",
+                name: name,
+                email: whoami.email,
+                url: "1password.com",
+                userUUID: nil
+            )
         }
     }
     
