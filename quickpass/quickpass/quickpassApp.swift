@@ -6,11 +6,11 @@
 //
 
 import SwiftUI
+import Combine
 
 @main
 struct quickpassApp: App {
     @StateObject private var clipboardManager = ClipboardManager()
-    // The ONLY instance of the 1Password connection
     @StateObject private var onePassword = OnePasswordCLI()
     
     var body: some Scene {
@@ -19,15 +19,26 @@ struct quickpassApp: App {
             if onePassword.isSignedIn {
                 ContentView()
                     .environmentObject(clipboardManager)
-                    .environmentObject(onePassword) // Share the connection
+                    .environmentObject(onePassword)
                     .frame(width: 400, height: 450)
             } else {
                 LoginView()
-                    .environmentObject(onePassword) // Share the connection
+                    .environmentObject(onePassword)
+                    .environmentObject(clipboardManager)
                     .frame(width: 400, height: 450)
             }
         }
         .menuBarExtraStyle(.window)
+        .onChange(of: clipboardManager.isAPIKey) { newValue in
+            // Fallback: trigger popup when isAPIKey changes to true
+            // This handles the initial detection case
+            if newValue && onePassword.isSignedIn {
+                OnePasswordWindowManager.shared.showPopup(
+                    clipboardManager: clipboardManager,
+                    onePassword: onePassword
+                )
+            }
+        }
     }
 }
 

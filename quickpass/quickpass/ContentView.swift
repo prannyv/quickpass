@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import SwiftData
 import AppKit
 
 // MARK: - MAIN CONTENT VIEW
@@ -16,11 +15,6 @@ struct ContentView: View {
     @EnvironmentObject var onePassword: OnePasswordCLI
     
     @State private var showingAddCredential = false
-    @State private var showingSettings = false
-    @State private var showingQuickSave = false
-    @State private var quickSaveTitle = ""
-    @State private var isSavingQuick = false
-    @State private var quickSaveError: String?
     @State private var showingSaveSuccess = false
     
     //Tracking logic
@@ -77,22 +71,23 @@ struct ContentView: View {
                 }
             }
             
-            // Logic 1: Increment counter
-            .onChange(of: clipboardManager.isAPIKey) { newValue in
-                if newValue {
-                    vulnerabilitiesStopped += 1
+            // Set up the callback to trigger popup when API key is detected
+            // This ensures popup shows even when isAPIKey doesn't change boolean value
+            .onAppear {
+                let onePasswordRef = onePassword
+                clipboardManager.onAPIKeyDetected = {
+                    guard onePasswordRef.isSignedIn else { return }
+                    OnePasswordWindowManager.shared.showPopup(
+                        clipboardManager: clipboardManager,
+                        onePassword: onePasswordRef
+                    )
                 }
             }
             
-            // Logic 2: Auto-trigger popup
-            .onChange(of: clipboardManager.currentText) { newValue in
-                if clipboardManager.isAPIKey {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        OnePasswordWindowManager.shared.showPopup(
-                            clipboardManager: clipboardManager,
-                            onePassword: onePassword
-                        )
-                    }
+            // Increment vulnerability counter when API key detected
+            .onChange(of: clipboardManager.isAPIKey) { newValue in
+                if newValue {
+                    vulnerabilitiesStopped += 1
                 }
             }
             
@@ -430,6 +425,11 @@ struct ProposalView: View {
     let collapsedSize = NSSize(width: 340, height: 160)
     let expandedSize = NSSize(width: 340, height: 450)
     
+    // Computed property for save button disabled state
+    private var isSaveDisabled: Bool {
+        isSaving || itemName.isEmpty || selectedVault.isEmpty || clipboardManager.currentText == nil
+    }
+    
     // MARK: - Save to 1Password
     
     private func saveToOnePassword() {
@@ -482,6 +482,140 @@ struct ProposalView: View {
         }
     }
     
+    // MARK: - View Components
+    
+    private var collapsedState: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(itemName)
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.7))
+                .padding(.leading, 16)
+                .padding(.top, 8)
+            
+            Text("Save in 1Password?")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.leading, 16)
+                .padding(.bottom, 4)
+            
+            HStack(spacing: 12) {
+                Button("Dismiss") {
+                    onClose()
+                }
+                .buttonStyle(DarkButtonStyle())
+                
+                Button("Save item") {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        isExpanded = true
+                    }
+                    onExpand(expandedSize)
+                }
+                .buttonStyle(BlueButtonStyle())
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+        }
+        .transition(.opacity)
+    }
+    
+    private var expandedState: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            DarkTextField(label: "Name", text: $itemName)
+            DarkDisabledField(label: "Token", text: tokenDisplay)
+            
+            DarkTagInput(
+                label: "Tags",
+                tags: $tags,
+                tagInput: $tagInput
+            )
+            
+            DarkVaultPicker(
+                label: "Vault",
+                selection: $selectedVault,
+                vaults: onePassword.availableVaults
+            )
+            
+            DarkTextField(label: "Website", text: $website)
+            
+            Spacer()
+            
+            // Show success/error message in place of buttons, or show buttons
+            if showSuccess {
+                successView
+                    .transition(.scale.combined(with: .opacity))
+            } else if let error = saveError {
+                errorView(error)
+                    .transition(.scale.combined(with: .opacity))
+            } else {
+                footerActions
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showSuccess)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: saveError)
+        .padding(16)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+    
+    private func errorView(_ error: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+                .font(.caption)
+            Text(error)
+                .font(.caption)
+                .foregroundColor(.orange)
+                .lineLimit(2)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity)
+        .background(Color.orange.opacity(0.15))
+        .cornerRadius(6)
+    }
+    
+    private var successView: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+                .font(.caption)
+            Text("Saved to 1Password!")
+                .font(.caption)
+                .foregroundColor(.green)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity)
+        .background(Color.green.opacity(0.15))
+        .cornerRadius(6)
+    }
+    
+    private var footerActions: some View {
+        HStack {
+            Spacer()
+            Button("Cancel") {
+                onClose()
+            }
+            .buttonStyle(DarkButtonStyle())
+            .disabled(isSaving)
+            
+            Button {
+                saveToOnePassword()
+            } label: {
+                if isSaving {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .colorScheme(.dark)
+                        Text("Saving...")
+                    }
+                } else {
+                    Text("Save")
+                }
+            }
+            .buttonStyle(BlueButtonStyle())
+            .disabled(isSaveDisabled)
+        }
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
@@ -491,9 +625,6 @@ struct ProposalView: View {
                     .padding(6)
                     .background(Circle().fill(Color.blue))
                     .font(.caption)
-                Text("Save in 1Password?")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
                 Spacer()
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -502,134 +633,16 @@ struct ProposalView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .padding(16)
-            
-            // Content
-            Text("GitHub Personal Access Token")
-                .font(.system(size: 15))
-                .foregroundColor(.white)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 20)
-            
-            if !isExpanded {
-                // --- COLLAPSED STATE ---
-                VStack(alignment: .leading, spacing: 20) {
-                    Text(itemName)
-                        .font(.system(size: 15))
-                        .foregroundColor(.white)
-                        .padding(.top, 10)
-                        .padding(.leading, 4)
-                    
-                    HStack(spacing: 12) {
-                        Button("Dismiss") {
-                            onClose()
-                        }
-                        .buttonStyle(DarkButtonStyle())
-                        
-                        Button("Save item") {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                isExpanded = true
-                            }
-                            // Trigger window resize
-                            onExpand(expandedSize)
-                        }
-                        .buttonStyle(BlueButtonStyle())
-                    }
-                }
-                .padding(16)
-                .transition(.opacity)
-            } else {
-                // --- EXPANDED STATE (Form) ---
-                VStack(alignment: .leading, spacing: 15) {
-                    
-                    // Fields
-                    DarkTextField(label: "Name", text: $itemName)
-                    
-                    // Token field - disabled, shows first 5 chars + "..."
-                    DarkDisabledField(label: "Token", text: tokenDisplay)
-                    
-                    DarkTagInput(
-                        label: "Tags",
-                        tags: $tags,
-                        tagInput: $tagInput
-                    )
-                    
-                    // Vault dropdown
-                    DarkVaultPicker(
-                        label: "Vault",
-                        selection: $selectedVault,
-                        vaults: onePassword.availableVaults
-                    )
-                    
-                    DarkTextField(label: "Website", text: $website)
-                    
-                    Spacer()
-                    
-                    // Error display
-                    if let error = saveError {
-                        HStack(spacing: 6) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundColor(.orange)
-                                .font(.caption)
-                            Text(error)
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                                .lineLimit(2)
-                        }
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.orange.opacity(0.15))
-                        .cornerRadius(6)
-                    }
-                    
-                    // Success display
-                    if showSuccess {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                                .font(.caption)
-                            Text("Saved to 1Password!")
-                                .font(.caption)
-                                .foregroundColor(.green)
-                        }
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.green.opacity(0.15))
-                        .cornerRadius(6)
-                    }
-                    
-                    // Footer Actions
-                    HStack {
-                        Spacer()
-                        Button("Cancel") {
-                            onClose()
-                        }
-                        .buttonStyle(DarkButtonStyle())
-                        .disabled(isSaving)
-                        
-                        Button {
-                            saveToOnePassword()
-                        } label: {
-                            if isSaving {
-                                HStack(spacing: 6) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                        .colorScheme(.dark)
-                                    Text("Saving...")
-                                }
-                            } else {
-                                Text("Save")
-                            }
-                        }
-                        .buttonStyle(BlueButtonStyle())
-                        .disabled(isSaving || itemName.isEmpty || selectedVault.isEmpty || clipboardManager.currentText == nil)
-                    }
-                }
-                .padding(16)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
             .padding(.horizontal, 16)
-            .padding(.bottom, 16)
+            .padding(.top, 16)
+            
+            Group {
+                if !isExpanded {
+                    collapsedState
+                } else {
+                    expandedState
+                }
+            }
         }
         .background(Color(red: 0.15, green: 0.15, blue: 0.16))
         .cornerRadius(12)
@@ -643,73 +656,6 @@ struct ProposalView: View {
                 selectedVault = firstVault.name
             }
         }
-    }
-}
-
-// 2. The Detailed Form Window
-struct SaveDetailsView: View {
-    var onClose: () -> Void
-    
-    @State private var itemName: String = "GitHub Personal Access Token"
-    @State private var token: String = "ghp_..."
-    @State private var tags: String = ""
-    @State private var website: String = "github.com"
-    @State private var selectedVault: String = ""
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Image(systemName: "lock.fill")
-                    .foregroundColor(.white)
-                    .padding(6)
-                    .background(Circle().fill(Color.blue))
-                    .font(.caption)
-                Text("Save Item")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
-                Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.gray)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(16)
-            
-            // Form Fields
-            VStack(alignment: .leading, spacing: 15) {
-                DarkTextField(label: "Name", text: $itemName)
-                DarkTextField(label: "Token", text: $token)
-                DarkTextField(label: "Tags", text: $tags, placeholder: "Add tags...")
-                DarkTextField(label: "Vault", text: $selectedVault, placeholder: "Select vault")
-                DarkTextField(label: "Website", text: $website)
-            }
-            .padding(.horizontal, 16)
-            
-            Spacer()
-            
-            // Footer
-            HStack {
-                Spacer()
-                Button("Cancel") { onClose() }
-                .buttonStyle(DarkButtonStyle())
-                
-                Button("Save") {
-                    print("Saved!")
-                    onClose()
-                }
-                .buttonStyle(BlueButtonStyle())
-            }
-            .padding(16)
-        }
-        .background(Color(red: 0.15, green: 0.15, blue: 0.16))
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-        )
     }
 }
 

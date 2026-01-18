@@ -19,6 +19,9 @@ final class ClipboardManager: ObservableObject {
     /// Whether the current clipboard text appears to be an API key
     @Published private(set) var isAPIKey: Bool = false
     
+    /// The last clipboard text that was detected as an API key (to avoid duplicate triggers)
+    private var lastDetectedAPIKeyText: String?
+    
     /// The last change count from NSPasteboard
     private var lastChangeCount: Int = 0
     
@@ -27,6 +30,9 @@ final class ClipboardManager: ObservableObject {
     
     /// Polling interval in seconds
     private let pollInterval: TimeInterval
+    
+    /// Callback triggered when an API key is detected in clipboard
+    var onAPIKeyDetected: (() -> Void)?
     
     init(pollInterval: TimeInterval = 0.5) {
         self.pollInterval = pollInterval
@@ -81,20 +87,32 @@ final class ClipboardManager: ObservableObject {
         lastChangeCount = pasteboard.changeCount
         
         let newText = pasteboard.string(forType: .string)
+        let previousText = currentText
         currentText = newText
         
         // Check if it is a key
         let detected = checkIsAPIKey(newText)
+        let wasAPIKey = isAPIKey
         isAPIKey = detected
         
-        // --- NEW TRIGGER LOGIC ---
-        // If an API key is found, immediately show the popup.
-        // We use DispatchQueue.main to ensure UI updates happen safely.
+        // Trigger popup if API key detected AND either:
+        // 1. This is a new detection (was false, now true), OR
+        // 2. The clipboard text changed to a different API key
         if detected {
-            print("API Key Detected! Triggering Popup...")
-            DispatchQueue.main.async {
-                // Calls the Window Manager shared instance (defined in ContentView.swift)
-                OnePasswordWindowManager.shared.showProposal()
+            let isNewDetection = !wasAPIKey
+            let isDifferentAPIKey = newText != lastDetectedAPIKeyText
+            
+            if isNewDetection || isDifferentAPIKey {
+                lastDetectedAPIKeyText = newText
+                print("API Key Detected! Triggering Popup...")
+                DispatchQueue.main.async { [weak self] in
+                    self?.onAPIKeyDetected?()
+                }
+            }
+        } else {
+            // Reset tracking when clipboard no longer contains an API key
+            if wasAPIKey {
+                lastDetectedAPIKeyText = nil
             }
         }
     }
