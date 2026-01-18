@@ -482,7 +482,7 @@ struct ProposalView: View {
         saveError = nil
         showSuccess = false
         
-        Task {
+        Task { @MainActor in
             do {
                 let credential = OnePasswordCLI.NewAPICredential(
                     title: itemName,
@@ -494,22 +494,17 @@ struct ProposalView: View {
                 
                 _ = try await onePassword.createAPICredential(credential)
                 
-                await MainActor.run {
-                    isSaving = false
-                    showSuccess = true
-                    
-                    // Auto-close after success and clear clipboard when window closes
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        // Clear clipboard when the card closes after successful save
-                        clipboardManager.clearClipboard()
-                        onClose()
-                    }
-                }
+                isSaving = false
+                showSuccess = true
+                
+                // Auto-close after success and clear clipboard when window closes
+                try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5 seconds
+                // Clear clipboard when the card closes after successful save
+                clipboardManager.clearClipboard()
+                onClose()
             } catch {
-                await MainActor.run {
-                    isSaving = false
-                    saveError = error.localizedDescription
-                }
+                isSaving = false
+                saveError = error.localizedDescription
             }
         }
     }
