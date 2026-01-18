@@ -108,8 +108,8 @@ struct ContentView: View {
             }
             
             // Increment vulnerability counter when API key detected
-            .onChange(of: clipboardManager.isAPIKey) { newValue in
-                if newValue {
+            .onChange(of: clipboardManager.currentText) { _ in
+                if clipboardManager.isAPIKey {
                     vulnerabilitiesStopped += 1
                 }
             }
