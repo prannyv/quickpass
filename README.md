@@ -4,12 +4,19 @@ Save your API keys to 1Password automatically, hassle-free.
 
 QuickPass monitors your clipboard and detects when you copy an API key (using entropy-based detection). With one click, save it directly to your 1Password vault.
 
+<img width="427" height="479" alt="IMG_2745" src="https://github.com/user-attachments/assets/7b7b757c-f416-465d-9311-5930427ded8d" />
+
+
 ## Features
 
 - **Clipboard Monitoring**: Automatically detects API keys based on Shannon entropy
 - **1Password Integration**: Securely saves credentials using 1Password CLI with desktop app integration
 - **Privacy-First**: No servers, no callbacks, everything runs locally
 - **Biometric Auth**: Uses Touch ID / password via 1Password desktop app
+
+<img width="360" height="157" alt="IMG_2439" src="https://github.com/user-attachments/assets/0aa1aac3-3f41-4c8f-bbd1-d1a25d8e86f9" />
+<img width="397" height="474" alt="IMG_7280" src="https://github.com/user-attachments/assets/ca90b1c8-01be-48cf-9002-bd4a3003426e" />
+
 
 ## Requirements
 
